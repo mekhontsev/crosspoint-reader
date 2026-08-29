@@ -232,7 +232,7 @@ families:
     description: "Monospace for code and technical reading (Latin, Greek, Cyrillic)"
     scripts: [latin, cyrillic, greek]
     intervals: latin-ext,greek,cyrillic,ipa-chars
-    sizes: [12, 14, 16, 18]
+    sizes: [8, 10, 12, 14, 16, 18, 20, 22, 24]
     styles:
       regular:    {url: "https://raw.githubusercontent.com/google/fonts/main/ofl/ibmplexmono/IBMPlexMono-Regular.ttf"}
       bold:       {url: "https://raw.githubusercontent.com/google/fonts/main/ofl/ibmplexmono/IBMPlexMono-Bold.ttf"}

@@ -37,3 +37,15 @@
 #include <builtinFonts/ubuntu_10_medium.h>
 #include <builtinFonts/ubuntu_12_bold.h>
 #include <builtinFonts/ubuntu_12_medium.h>
+
+#if defined(ENABLE_BLE_TERMINAL) && ENABLE_BLE_TERMINAL
+#include <builtinFonts/terminalmono_8_regular.h>
+#include <builtinFonts/terminalmono_10_regular.h>
+#include <builtinFonts/terminalmono_12_regular.h>
+#include <builtinFonts/terminalmono_14_regular.h>
+#include <builtinFonts/terminalmono_16_regular.h>
+#include <builtinFonts/terminalmono_18_regular.h>
+#include <builtinFonts/terminalmono_20_regular.h>
+#include <builtinFonts/terminalmono_22_regular.h>
+#include <builtinFonts/terminalmono_24_regular.h>
+#endif

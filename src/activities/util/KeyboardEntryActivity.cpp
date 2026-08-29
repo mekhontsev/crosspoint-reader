@@ -7,6 +7,7 @@
 #include <cstring>
 
 #include "MappedInputManager.h"
+#include "components/HeaderKeyboardButton.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -503,6 +504,14 @@ void KeyboardEntryActivity::loop() {
   int tx = 0;
   int ty = 0;
 
+  if (showHeaderKeyboardToggle) {
+    const Rect toggle = header_keyboard_button::layout(renderer, UITheme::getInstance().getMetrics(), title.c_str());
+    if (mappedInput.wasTapInRect(toggle.x, toggle.y, toggle.width, toggle.height)) {
+      onCancel();
+      return;
+    }
+  }
+
   size_t touchedCursorPos = 0;
   if (mappedInput.wasScreenTapped(tx, ty) && cursorPositionFromPoint(tx, ty, touchedCursorPos)) {
     cursorPos = std::min(touchedCursorPos, text.length());
@@ -702,6 +711,9 @@ void KeyboardEntryActivity::render(RenderLock&&) {
   const auto& metrics = UITheme::getInstance().getMetrics();
 
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, title.c_str());
+  if (showHeaderKeyboardToggle) {
+    header_keyboard_button::draw(renderer, header_keyboard_button::layout(renderer, metrics, title.c_str()));
+  }
 
   const int lineHeight = renderer.getLineHeight(UI_12_FONT_ID);
   const int inputStartY = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing +

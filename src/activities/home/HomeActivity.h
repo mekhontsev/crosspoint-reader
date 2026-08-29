@@ -42,6 +42,10 @@ class HomeActivity final : public Activity {
     if (hasOpdsUrl) ++i;
     if (item == HomeMenuItem::FILE_TRANSFER) return i;
     ++i;
+#if defined(ENABLE_BLE_TERMINAL) && ENABLE_BLE_TERMINAL
+    if (item == HomeMenuItem::TERMINAL) return i;
+    ++i;
+#endif
     if (item == HomeMenuItem::SETTINGS_MENU) return i;
     return 0;
   }
@@ -53,6 +57,9 @@ class HomeActivity final : public Activity {
     if (idx == i++) return HomeMenuItem::RECENTS;
     if (hasOpdsUrl && idx == i++) return HomeMenuItem::OPDS_BROWSER;
     if (idx == i++) return HomeMenuItem::FILE_TRANSFER;
+#if defined(ENABLE_BLE_TERMINAL) && ENABLE_BLE_TERMINAL
+    if (idx == i++) return HomeMenuItem::TERMINAL;
+#endif
     if (idx == i) return HomeMenuItem::SETTINGS_MENU;
     return HomeMenuItem::NONE;
   }
@@ -61,6 +68,9 @@ class HomeActivity final : public Activity {
   void onRecentsOpen();
   void onSettingsOpen();
   void onFileTransferOpen();
+#if defined(ENABLE_BLE_TERMINAL) && ENABLE_BLE_TERMINAL
+  void onBleTerminalOpen();
+#endif
   void onOpdsBrowserOpen();
 
   int getMenuItemCount() const;

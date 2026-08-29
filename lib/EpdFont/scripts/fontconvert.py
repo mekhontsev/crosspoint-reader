@@ -10,7 +10,9 @@ from collections import namedtuple
 # (default cp1252) doesn't emit UTF-16 LE / replacement chars in the generated
 # header. Wrapped in a hasattr guard so it's a no-op on older Pythons.
 if hasattr(sys.stdout, 'reconfigure'):
-    sys.stdout.reconfigure(encoding='utf-8')
+    # Generated headers are hashed to obtain their runtime font IDs. Keep line
+    # endings identical on Windows and Unix so the IDs are reproducible.
+    sys.stdout.reconfigure(encoding='utf-8', newline='\n')
 
 # Originally from https://github.com/vroland/epdiy
 

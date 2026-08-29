@@ -1,4 +1,5 @@
 import hashlib
+import shutil
 import sys
 from pathlib import Path
 
@@ -16,6 +17,25 @@ if "--self-test" in sys.argv:
 Import("env")  # noqa: F821 -- provided by PlatformIO
 
 platform = env.PioPlatform()
+board = env.BoardConfig()
+mcu = board.get("build.mcu", "esp32")
+chip_variant = board.get("build.chip_variant", "").lower() or mcu
+framework_libs = Path(platform.get_package_dir("framework-arduinoespressif32-libs"))
+
+# PioArduino's component manager edits this generated file in place when a
+# normal CrossPoint profile excludes the Arduino BLE library. The terminal
+# profile needs the underlying ESP-IDF Bluetooth component, so restore the
+# package-provided full template before the framework builder reads it.
+if env.subst("$PIOENV") == "x4pro-ble-terminal":
+    component_build = framework_libs / chip_variant / "pioarduino-build.py"
+    component_template = framework_libs / chip_variant / f"pioarduino-build.py.{chip_variant}"
+    if component_template.is_file() and (
+        not component_build.is_file()
+        or component_build.read_bytes() != component_template.read_bytes()
+    ):
+        shutil.copyfile(component_template, component_build)
+        print(f"Restored Bluetooth-capable Arduino framework for {chip_variant}")
+
 builder = Path(platform.get_dir()) / "builder" / "frameworks" / "arduino.py"
 source = builder.read_text(encoding="utf-8")
 # The package already stores libraries per chip; only its cache-presence check is global.
@@ -32,10 +52,6 @@ elif new_check not in source:
     raise RuntimeError("Unsupported pioarduino cache check")
 
 requested = env.GetProjectOption("custom_sdkconfig", "")
-board = env.BoardConfig()
-mcu = board.get("build.mcu", "esp32")
-chip_variant = board.get("build.chip_variant", "").lower() or mcu
-framework_libs = Path(platform.get_package_dir("framework-arduinoespressif32-libs"))
 target_sdkconfig = framework_libs / chip_variant / "sdkconfig"
 original_sdkconfig = framework_libs / chip_variant / "sdkconfig.orig"
 request_file = framework_libs / chip_variant / "sdkconfig.crosspoint"

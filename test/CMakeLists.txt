@@ -29,11 +29,15 @@ target_include_directories(crosspoint_test_common INTERFACE
   ${REPO_ROOT}
   ${REPO_ROOT}/lib
 )
-target_compile_options(crosspoint_test_common INTERFACE
-  -Wall
-  -Wextra
-  -pedantic
-)
+if(MSVC)
+  target_compile_options(crosspoint_test_common INTERFACE /W4)
+else()
+  target_compile_options(crosspoint_test_common INTERFACE
+    -Wall
+    -Wextra
+    -pedantic
+  )
+endif()
 
 enable_testing()
 include(GoogleTest)
@@ -52,3 +56,4 @@ add_subdirectory(xml_parser_utils)
 add_subdirectory(token_boundary)
 add_subdirectory(font_cache_manager)
 add_subdirectory(css_parser)
+add_subdirectory(ble_terminal_protocol)

@@ -7,6 +7,7 @@ cd "$(dirname "$0")"
 READER_FONT_STYLES=("Regular" "Italic" "Bold" "BoldItalic")
 NOTOSERIF_FONT_SIZES=(12 14 16 18)
 NOTOSANS_FONT_SIZES=(12 14 16 18)
+TERMINAL_MONO_FONT_SIZES=(8 10 12 14 16 18 20 22 24)
 
 for size in ${NOTOSERIF_FONT_SIZES[@]}; do
   for style in ${READER_FONT_STYLES[@]}; do
@@ -99,6 +100,14 @@ python fontconvert.py notosans_8_regular 8 \
   ../builtinFonts/source/NotoSansHebrew/NotoSansHebrew-Regular.ttf \
   ../builtinFonts/source/NotoSansArabic/NotoSansArabic-Regular.ttf \
   --additional-intervals 0x05D0,0x05EA "${ARABIC_INTERVALS[@]}" > ../builtinFonts/notosans_8_regular.h
+
+for size in ${TERMINAL_MONO_FONT_SIZES[@]}; do
+  font_name="terminalmono_${size}_regular"
+  font_path="../builtinFonts/source/IBMPlexMono/IBMPlexMono-Regular.ttf"
+  output_path="../builtinFonts/${font_name}.h"
+  python fontconvert.py $font_name $size $font_path --2bit --compress --zopfli > $output_path
+  echo "Generated $output_path"
+done
 
 echo ""
 echo "Running compression verification..."

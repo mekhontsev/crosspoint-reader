@@ -9,6 +9,10 @@ Experimental prerelease for **Xteink X4 Pro only**. This is an unofficial fork
 of CrossPoint Reader and is not supported by the upstream CrossPoint project or
 Xteink.
 
+The firmware identifies itself as
+`1.5.0-x4pro-x4terminal-v0.1.0`, so it can be distinguished from an ordinary
+CrossPoint X4 Pro build in diagnostics.
+
 ## What it adds
 
 - `Terminal` home-menu activity, compiled only in the opt-in

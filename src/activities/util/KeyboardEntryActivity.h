@@ -21,13 +21,15 @@ class KeyboardEntryActivity : public Activity {
   explicit KeyboardEntryActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                  std::string title = "Enter Text", std::string initialText = "",
                                  const size_t maxLength = 0, InputType inputType = InputType::Text,
-                                 const bool showHeaderKeyboardToggle = false)
+                                 const bool showHeaderKeyboardToggle = false,
+                                 const bool enableSystemLanguageSwitch = false)
       : Activity("KeyboardEntry", renderer, mappedInput),
         title(std::move(title)),
         text(std::move(initialText)),
         maxLength(maxLength),
         inputType(inputType),
-        showHeaderKeyboardToggle(showHeaderKeyboardToggle) {}
+        showHeaderKeyboardToggle(showHeaderKeyboardToggle),
+        enableSystemLanguageSwitch(enableSystemLanguageSwitch) {}
 
   void onEnter() override;
   void onExit() override;
@@ -40,6 +42,7 @@ class KeyboardEntryActivity : public Activity {
   size_t maxLength;
   InputType inputType;
   bool showHeaderKeyboardToggle;
+  bool enableSystemLanguageSwitch;
   bool passwordVisible = false;
 
   ButtonNavigator buttonNavigator;
@@ -48,13 +51,16 @@ class KeyboardEntryActivity : public Activity {
   // layouts (with the always-visible number row); the URL layers are
   // app-defined tables in the .cpp.
   freeink::ui::KeyboardLayoutId layoutId = freeink::ui::KeyboardLayoutId::QwertyEn;
+  freeink::ui::KeyboardLayoutId systemLayoutId = freeink::ui::KeyboardLayoutId::QwertyEn;
+  const char* systemLanguageLabel = "EN";
+  bool languageSwitchAvailable = false;
   bool shifted = false;
   bool symbols = false;
   bool urlPanel = false;  // URL snippet panel replaces the letter layer
 
   // Key hit rects registered by the keyboard component during render();
-  // loop() routes touch snapshots against them. 5-row EN layout registers 41
-  // keys, so 48 leaves headroom.
+  // loop() routes touch snapshots against them. The 5-row Cyrillic layouts use
+  // all 48 slots; other built-in layouts use fewer.
   freeink::ui::InteractionBuffer<48> interactions;
 
   // GPIO selection over the current layout grid (row/col in layout terms;

@@ -13,10 +13,9 @@ namespace header_keyboard_button {
 enum class Glyph { KEYBOARD, FONT_DECREASE, FONT_INCREASE };
 
 inline Rect layout(const GfxRenderer& renderer, const ThemeMetrics& metrics, const char* title,
-                   const size_t slot = 0, const size_t slotCount = 1) {
+                   const size_t slot = 0, const size_t slotCount = 1, const int titleGap = 8) {
   constexpr int width = 48;
   constexpr int height = 30;
-  constexpr int titleGap = 8;
   constexpr int buttonGap = 6;
   constexpr int titleBottomGap = 8;  // FreeInkUI ThemeTokens::spaceMd
 

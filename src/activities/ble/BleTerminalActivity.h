@@ -26,8 +26,9 @@ class BleTerminalActivity final : public Activity {
  private:
   static constexpr uint32_t MIN_DISPLAY_REFRESH_MS = 3000;
   static constexpr uint32_t STREAM_QUIET_MS = 700;
-  static constexpr uint32_t MAX_DIRTY_LATENCY_MS = 5000;
+  static constexpr uint32_t MAX_DIRTY_LATENCY_MS = 3000;
   static constexpr uint32_t DATA_KEEP_AWAKE_MS = 5000;
+  static constexpr uint32_t TRANSFER_IDLE_MS = 2000;
   static constexpr size_t DISPLAY_LINE_BYTES = 256;
 
   ble_terminal::BleTerminalTransport transport_;
@@ -40,6 +41,7 @@ class BleTerminalActivity final : public Activity {
   uint32_t observedStatusRevision_ = 0;
   unsigned long dirtySince_ = 0;
   unsigned long lastPacketAt_ = 0;
+  unsigned long lastTransferActivityAt_ = 0;
   unsigned long lastDisplayRequestAt_ = 0;
   bool screenDirty_ = false;
   bool needsReset_ = false;
@@ -54,6 +56,7 @@ class BleTerminalActivity final : public Activity {
   int terminalFontId() const;
   void changeFontSize(int direction);
   void scrollPage(int direction);
+  void jumpToTail();
 };
 
 #endif

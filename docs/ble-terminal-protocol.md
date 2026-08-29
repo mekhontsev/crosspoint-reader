@@ -19,11 +19,13 @@ old complete lines first. BLE reception and e-ink refresh are independent: the
 firmware may coalesce several appends into one display refresh without losing
 stream data.
 
-The display scheduler waits 700 ms after the newest packet, never refreshes
-more often than once every 3 seconds, and forces a refresh after 5 seconds of
-continuous dirty output. With no new data there are no display refreshes. A
-valid packet keeps the normal auto-sleep timer reset for only 5 seconds; a
-quiet BLE connection does not keep the reader awake forever.
+The display scheduler never refreshes more often than once every 3 seconds.
+During a continuous stream it shows the newest received state every 3 seconds;
+after a shorter burst it waits 700 ms for more packets and draws the final state
+when the minimum refresh interval permits. BLE reception continues independently
+while the render task updates the panel. With no new data there are no display
+refreshes. A valid packet keeps the normal auto-sleep timer reset for only 5
+seconds; a quiet BLE connection does not keep the reader awake forever.
 
 If a sequence gap is detected, the displayed text is preserved but further
 appends are rejected. Android resynchronizes by sending a new `STREAM_RESET`
@@ -83,7 +85,9 @@ open. Packet processing performs no allocation.
 ## GATT service
 
 The reader advertises as `X4 Terminal` every 500-750 ms while this activity is
-open. It requests a 100-200 ms connection interval with peripheral latency 4.
+open. It requests a 15-30 ms, zero-latency connection while packets are moving,
+then returns to a 100-200 ms interval with peripheral latency 4 after 2 seconds
+without stream data.
 
 | Role | UUID | Properties |
 |---|---|---|
@@ -92,7 +96,9 @@ open. It requests a 100-200 ms connection interval with peripheral latency 4.
 | Reader to Android | `6f2c8f10-7f7a-4f1e-a2a6-8e8b7b3f6c03` | Indicate only after authenticated encryption |
 
 Write with response supplies backpressure for the reader's fixed eight-packet
-queue. Android must retry a failed write instead of advancing its sequence.
+queue. Android sends the next packet immediately after the acknowledgement; it
+must retry a failed write instead of advancing its sequence. This protocol does
+not pace BLE traffic to the e-ink refresh rate.
 
 ## Packet envelope
 
@@ -134,6 +140,12 @@ Android bridge.
 Command text permits printable UTF-8 only. Embedded newline, tab, NUL, ESC,
 other controls, invalid Unicode, and payloads above 234 bytes are rejected.
 The keyboard limits input to the payload supported by the negotiated ATT MTU.
+Only the Terminal command keyboard enables a language key. It starts with the
+reader's UI language when FreeInkUI provides that layout (French, German,
+Spanish, Russian, Ukrainian, Belarusian, or Kazakh) and switches between that
+layout and English. Other CrossPoint keyboards keep their existing behavior.
+The side Page Up and Page Down buttons move through the local transcript one
+screen at a time. Holding Page Down for 700 ms jumps directly to the live tail.
 
 ## Android connection and replay contract
 

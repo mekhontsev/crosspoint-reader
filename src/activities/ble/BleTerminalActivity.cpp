@@ -27,6 +27,8 @@ namespace {
 
 constexpr size_t DISPLAY_LINE_BYTES = 256;
 constexpr size_t HEADER_CONTROL_COUNT = 3;
+constexpr int HEADER_TITLE_GAP = 20;
+constexpr unsigned long JUMP_TO_TAIL_HOLD_MS = 700;
 constexpr std::array<int, 9> TERMINAL_FONT_IDS = {
     TERMINAL_MONO_8_FONT_ID,  TERMINAL_MONO_10_FONT_ID, TERMINAL_MONO_12_FONT_ID,
     TERMINAL_MONO_14_FONT_ID, TERMINAL_MONO_16_FONT_ID, TERMINAL_MONO_18_FONT_ID,
@@ -145,6 +147,7 @@ void BleTerminalActivity::onEnter() {
   viewportStart_ = 0;
   dirtySince_ = 0;
   lastPacketAt_ = 0;
+  lastTransferActivityAt_ = 0;
   lastDisplayRequestAt_ = millis();
   LOG_INF("BLE_TERM", "Transcript buffer: %u bytes in %s; free heap=%u, PSRAM=%u",
           static_cast<unsigned>(ble_terminal::MAX_TRANSCRIPT_BYTES),
@@ -174,7 +177,9 @@ void BleTerminalActivity::openCommandKeyboard() {
 
   commandSendFailed_ = false;
   auto keyboard = makeUniqueNoThrow<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_TERMINAL_COMMAND), "",
-                                                            maxLength, InputType::Text, true);
+                                                            maxLength, InputType::Text,
+                                                            /*showHeaderKeyboardToggle=*/true,
+                                                            /*enableSystemLanguageSwitch=*/true);
   if (!keyboard) {
     LOG_ERR("BLE_TERM", "Unable to allocate command keyboard");
     return;
@@ -251,6 +256,16 @@ void BleTerminalActivity::scrollPage(const int direction) {
   if (changed) requestUpdate();
 }
 
+void BleTerminalActivity::jumpToTail() {
+  if (!transcriptMutex_ || xSemaphoreTake(transcriptMutex_, portMAX_DELAY) != pdTRUE) return;
+  const bool changed = !followTail_;
+  followTail_ = true;
+  viewportStart_ = 0;
+  xSemaphoreGive(transcriptMutex_);
+
+  if (changed) requestUpdate();
+}
+
 void BleTerminalActivity::loop() {
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     onGoHome(HomeMenuItem::TERMINAL);
@@ -260,19 +275,22 @@ void BleTerminalActivity::loop() {
   {
     const auto& metrics = UITheme::getInstance().getMetrics();
     const char* title = tr(STR_X4_TERMINAL);
-    const Rect keyboardButton = header_keyboard_button::layout(renderer, metrics, title, 0, HEADER_CONTROL_COUNT);
+    const Rect keyboardButton =
+        header_keyboard_button::layout(renderer, metrics, title, 0, HEADER_CONTROL_COUNT, HEADER_TITLE_GAP);
     if (mappedInput.wasTapInRect(keyboardButton.x, keyboardButton.y, keyboardButton.width, keyboardButton.height)) {
       if (transport_.readyToSend()) openCommandKeyboard();
       return;
     }
 
-    const Rect decreaseButton = header_keyboard_button::layout(renderer, metrics, title, 1, HEADER_CONTROL_COUNT);
+    const Rect decreaseButton =
+        header_keyboard_button::layout(renderer, metrics, title, 1, HEADER_CONTROL_COUNT, HEADER_TITLE_GAP);
     if (mappedInput.wasTapInRect(decreaseButton.x, decreaseButton.y, decreaseButton.width, decreaseButton.height)) {
       changeFontSize(-1);
       return;
     }
 
-    const Rect increaseButton = header_keyboard_button::layout(renderer, metrics, title, 2, HEADER_CONTROL_COUNT);
+    const Rect increaseButton =
+        header_keyboard_button::layout(renderer, metrics, title, 2, HEADER_CONTROL_COUNT, HEADER_TITLE_GAP);
     if (mappedInput.wasTapInRect(increaseButton.x, increaseButton.y, increaseButton.width, increaseButton.height)) {
       changeFontSize(1);
       return;
@@ -280,8 +298,12 @@ void BleTerminalActivity::loop() {
   }
 
   // Keep short-range history navigation local so it works immediately and
-  // causes no BLE traffic or phone wake-up.
-  if (mappedInput.wasReleased(MappedInputManager::Button::Up)) {
+  // causes no BLE traffic or phone wake-up. Holding Page Down jumps directly
+  // to the live tail; wasLongPressed() suppresses the matching release so it
+  // cannot also advance one page.
+  if (mappedInput.wasLongPressed(MappedInputManager::Button::Down, JUMP_TO_TAIL_HOLD_MS)) {
+    jumpToTail();
+  } else if (mappedInput.wasReleased(MappedInputManager::Button::Up)) {
     scrollPage(-1);
   } else if (mappedInput.wasReleased(MappedInputManager::Button::Down)) {
     scrollPage(1);
@@ -313,14 +335,27 @@ void BleTerminalActivity::loop() {
     if (protocolNeedsReset) needsReset_ = true;
     xSemaphoreGive(transcriptMutex_);
 
-    if (validStreamPacket || protocolNeedsReset) lastPacketAt_ = now;
+    if (validStreamPacket || protocolNeedsReset) {
+      lastPacketAt_ = now;
+      lastTransferActivityAt_ = now;
+      transport_.setTransferActive(true);
+    }
     if ((streamChanged && (followTail_ || discardedBytes > 0)) || protocolNeedsReset) markScreenDirty(now);
   }
 
   const uint32_t statusRevision = transport_.statusRevision();
   if (statusRevision != observedStatusRevision_) {
     observedStatusRevision_ = statusRevision;
+    if (transport_.status() == ble_terminal::BleTerminalTransport::Status::CONNECTED) {
+      lastTransferActivityAt_ = now;
+      transport_.setTransferActive(true);
+    }
     markScreenDirty(now);
+  }
+
+  if (lastTransferActivityAt_ != 0 && now - lastTransferActivityAt_ >= TRANSFER_IDLE_MS) {
+    lastTransferActivityAt_ = 0;
+    transport_.setTransferActive(false);
   }
 
   if (!screenDirty_) return;
@@ -384,14 +419,14 @@ void BleTerminalActivity::render(RenderLock&&) {
   renderer.clearScreen();
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_X4_TERMINAL));
   const char* title = tr(STR_X4_TERMINAL);
-  header_keyboard_button::draw(renderer,
-                               header_keyboard_button::layout(renderer, metrics, title, 0, HEADER_CONTROL_COUNT));
-  header_keyboard_button::draw(renderer,
-                               header_keyboard_button::layout(renderer, metrics, title, 1, HEADER_CONTROL_COUNT),
-                               header_keyboard_button::Glyph::FONT_DECREASE);
-  header_keyboard_button::draw(renderer,
-                               header_keyboard_button::layout(renderer, metrics, title, 2, HEADER_CONTROL_COUNT),
-                               header_keyboard_button::Glyph::FONT_INCREASE);
+  header_keyboard_button::draw(
+      renderer, header_keyboard_button::layout(renderer, metrics, title, 0, HEADER_CONTROL_COUNT, HEADER_TITLE_GAP));
+  header_keyboard_button::draw(
+      renderer, header_keyboard_button::layout(renderer, metrics, title, 1, HEADER_CONTROL_COUNT, HEADER_TITLE_GAP),
+      header_keyboard_button::Glyph::FONT_DECREASE);
+  header_keyboard_button::draw(
+      renderer, header_keyboard_button::layout(renderer, metrics, title, 2, HEADER_CONTROL_COUNT, HEADER_TITLE_GAP),
+      header_keyboard_button::Glyph::FONT_INCREASE);
 
   const int bodyTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
   const int bodyHeight = pageHeight - bodyTop - metrics.buttonHintsHeight;

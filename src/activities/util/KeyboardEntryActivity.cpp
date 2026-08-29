@@ -123,6 +123,35 @@ fui::KeyboardLayoutId layoutForLanguage(const Language language) {
   }
 }
 
+bool switchableLayoutForLanguage(const Language language, fui::KeyboardLayoutId& layout) {
+  switch (language) {
+    case Language::FR:
+      layout = fui::KeyboardLayoutId::AzertyFr;
+      return true;
+    case Language::DE:
+      layout = fui::KeyboardLayoutId::QwertzDe;
+      return true;
+    case Language::ES:
+      layout = fui::KeyboardLayoutId::SpanishEs;
+      return true;
+    case Language::RU:
+      layout = fui::KeyboardLayoutId::CyrillicRu;
+      return true;
+    case Language::UK:
+      layout = fui::KeyboardLayoutId::CyrillicUk;
+      return true;
+    case Language::BE:
+      layout = fui::KeyboardLayoutId::CyrillicBe;
+      return true;
+    case Language::KK:
+      layout = fui::KeyboardLayoutId::CyrillicKk;
+      return true;
+    case Language::EN:
+    default:
+      return false;
+  }
+}
+
 }  // namespace
 
 void KeyboardEntryActivity::onEnter() {
@@ -131,6 +160,14 @@ void KeyboardEntryActivity::onEnter() {
   // URL layers are EN-arranged app tables; everything else follows the UI
   // language.
   layoutId = inputType == InputType::Url ? fui::KeyboardLayoutId::QwertyEn : layoutForLanguage(I18N.getLanguage());
+  systemLayoutId = fui::KeyboardLayoutId::QwertyEn;
+  systemLanguageLabel = "EN";
+  languageSwitchAvailable = enableSystemLanguageSwitch && inputType == InputType::Text &&
+                            switchableLayoutForLanguage(I18N.getLanguage(), systemLayoutId);
+  if (languageSwitchAvailable) {
+    layoutId = systemLayoutId;
+    systemLanguageLabel = LANGUAGE_CODES[static_cast<uint8_t>(I18N.getLanguage())];
+  }
   shifted = false;
   symbols = false;
   urlPanel = false;
@@ -161,7 +198,8 @@ const fui::KeyboardLayout& KeyboardEntryActivity::currentLayout() const {
     if (urlPanel) return URL_SNIPPET_LAYOUT;
     return shifted ? URL_SHIFT_LAYOUT : URL_LAYOUT;
   }
-  return fui::builtinKeyboardLayout(layoutId, shifted, false, /*numberRow=*/true);
+  return fui::builtinKeyboardLayout(layoutId, shifted, false, /*numberRow=*/true,
+                                    /*langKey=*/languageSwitchAvailable);
 }
 
 const fui::KeyboardKey* KeyboardEntryActivity::selectedKey() const {
@@ -280,6 +318,13 @@ bool KeyboardEntryActivity::activateValue(const int16_t value, const bool longPr
         symbols = !symbols;
         shifted = false;
       }
+      clampSelection();
+      return true;
+    case fui::QWERTY_KEY_LANG:
+      if (!languageSwitchAvailable) return false;
+      layoutId = layoutId == fui::KeyboardLayoutId::QwertyEn ? systemLayoutId : fui::KeyboardLayoutId::QwertyEn;
+      shifted = false;
+      symbols = false;
       clampSelection();
       return true;
     case URL_PANEL_KEY:
@@ -962,6 +1007,9 @@ void KeyboardEntryActivity::render(RenderLock&&) {
   // layer and the URL snippet panel both label it "abc" in the static tables.
   props.modeLabel =
       (symbols || (inputType == InputType::Url && urlPanel)) ? tr(STR_KEY_MODE_ABC) : tr(STR_KEY_MODE_SYMBOLS);
+  if (languageSwitchAvailable) {
+    props.langLabel = layoutId == fui::KeyboardLayoutId::QwertyEn ? systemLanguageLabel : "EN";
+  }
   props.inputMask = static_cast<uint16_t>(fui::InputTouch | fui::InputLongPress);
   props.selectedIndex = cursorMode ? -1 : static_cast<int16_t>(selectedLogicalIndex());
   props.labelText.font = fui::GfxRendererTarget::FONT_BODY;

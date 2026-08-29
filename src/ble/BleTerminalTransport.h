@@ -37,6 +37,7 @@ class BleTerminalTransport final {
   bool sendCommand(const std::string& command);
   bool readyToSend() const;
   size_t maxCommandBytes() const;
+  void setTransferActive(bool active);
 
   Status status() const { return status_.load(); }
   uint32_t statusRevision() const { return statusRevision_.load(); }
@@ -59,6 +60,7 @@ class BleTerminalTransport final {
   std::atomic<bool> indicationsEnabled_{false};
   std::atomic<bool> hostTaskRunning_{false};
   std::atomic<bool> stopping_{false};
+  std::atomic<bool> transferActive_{false};
   bool stackInitialized_ = false;
   bool hostTaskStarted_ = false;
   uint8_t ownAddressType_ = 0;
@@ -70,6 +72,7 @@ class BleTerminalTransport final {
   void setStatus(Status status);
   void setPairingPasskey(uint32_t passkey);
   bool configureGatt();
+  bool requestConnectionParameters(uint16_t connectionHandle, bool active);
   static bool isConnectionSecure(uint16_t connectionHandle);
   bool sendPacket(const uint8_t* packet, size_t length, const char* description);
   int startAdvertising();

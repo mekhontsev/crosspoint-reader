@@ -32,9 +32,12 @@ namespace ble_terminal {
 namespace {
 
 constexpr char DEVICE_NAME[] = "X4 Terminal";
-constexpr uint16_t CONNECTION_INTERVAL_MIN = 80;   // 100 ms in 1.25 ms units
-constexpr uint16_t CONNECTION_INTERVAL_MAX = 160;  // 200 ms in 1.25 ms units
-constexpr uint16_t CONNECTION_LATENCY = 4;
+constexpr uint16_t ACTIVE_CONNECTION_INTERVAL_MIN = 12;  // 15 ms in 1.25 ms units
+constexpr uint16_t ACTIVE_CONNECTION_INTERVAL_MAX = 24;  // 30 ms in 1.25 ms units
+constexpr uint16_t ACTIVE_CONNECTION_LATENCY = 0;
+constexpr uint16_t IDLE_CONNECTION_INTERVAL_MIN = 80;   // 100 ms in 1.25 ms units
+constexpr uint16_t IDLE_CONNECTION_INTERVAL_MAX = 160;  // 200 ms in 1.25 ms units
+constexpr uint16_t IDLE_CONNECTION_LATENCY = 4;
 constexpr uint16_t SUPERVISION_TIMEOUT = 600;  // 6 seconds in 10 ms units
 constexpr uint16_t ADVERTISING_INTERVAL_MIN = 800;   // 500 ms in 0.625 ms units
 constexpr uint16_t ADVERTISING_INTERVAL_MAX = 1200;  // 750 ms in 0.625 ms units
@@ -126,6 +129,7 @@ bool BleTerminalTransport::start() {
   txValueHandle_ = 0;
   outgoingSequence_ = 0;
   stopping_.store(false);
+  transferActive_.store(false);
   active_.store(this);
   setStatus(Status::STARTING);
 
@@ -213,6 +217,7 @@ void BleTerminalTransport::stop() {
   indicationsEnabled_ = false;
   setPairingPasskey(0);
   stopping_.store(false);
+  transferActive_.store(false);
   if (queue_) xQueueReset(queue_);
   setStatus(Status::STOPPED);
 }
@@ -248,6 +253,29 @@ size_t BleTerminalTransport::maxCommandBytes() const {
   const uint16_t mtu = ble_att_mtu(connectionHandle);
   if (mtu <= PACKET_HEADER_BYTES + 3) return 0;
   return std::min(MAX_COMMAND_BYTES, static_cast<size_t>(mtu - 3 - PACKET_HEADER_BYTES));
+}
+
+bool BleTerminalTransport::requestConnectionParameters(const uint16_t connectionHandle, const bool active) {
+  const ble_gap_upd_params parameters{
+      active ? ACTIVE_CONNECTION_INTERVAL_MIN : IDLE_CONNECTION_INTERVAL_MIN,
+      active ? ACTIVE_CONNECTION_INTERVAL_MAX : IDLE_CONNECTION_INTERVAL_MAX,
+      active ? ACTIVE_CONNECTION_LATENCY : IDLE_CONNECTION_LATENCY,
+      SUPERVISION_TIMEOUT,
+      0,
+      0,
+  };
+  const int result = ble_gap_update_params(connectionHandle, &parameters);
+  if (result != 0) {
+    LOG_DBG("BLE_TERM", "%s connection parameter request failed (%d)", active ? "Active" : "Idle", result);
+    return false;
+  }
+  return true;
+}
+
+void BleTerminalTransport::setTransferActive(const bool active) {
+  const uint16_t connectionHandle = connectionHandle_.load();
+  if (connectionHandle == NO_CONNECTION || transferActive_.exchange(active) == active) return;
+  requestConnectionParameters(connectionHandle, active);
 }
 
 bool BleTerminalTransport::sendPacket(const uint8_t* packet, const size_t length, const char* description) {
@@ -350,13 +378,11 @@ int BleTerminalTransport::gapEvent(ble_gap_event* event, void*) {
       if (event->connect.status == 0) {
         instance->connectionHandle_ = event->connect.conn_handle;
         instance->indicationsEnabled_ = false;
+        instance->transferActive_ = true;
         instance->setPairingPasskey(0);
         instance->setStatus(Status::PAIRING);
 
-        const ble_gap_upd_params parameters{CONNECTION_INTERVAL_MIN, CONNECTION_INTERVAL_MAX, CONNECTION_LATENCY,
-                                            SUPERVISION_TIMEOUT, 0, 0};
-        const int updateResult = ble_gap_update_params(event->connect.conn_handle, &parameters);
-        if (updateResult != 0) LOG_DBG("BLE_TERM", "Connection parameter request failed (%d)", updateResult);
+        instance->requestConnectionParameters(event->connect.conn_handle, true);
 
         // The central initiates pairing explicitly. This lets clients register
         // the correct passkey-entry handler before the Security Manager asks
@@ -373,6 +399,7 @@ int BleTerminalTransport::gapEvent(ble_gap_event* event, void*) {
     case BLE_GAP_EVENT_DISCONNECT:
       instance->connectionHandle_ = NO_CONNECTION;
       instance->indicationsEnabled_ = false;
+      instance->transferActive_ = false;
       instance->setPairingPasskey(0);
       if (!instance->stopping_.load()) {
         const int result = instance->startAdvertising();

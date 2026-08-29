@@ -218,6 +218,20 @@ async def pair_with_reader_passkey(client) -> None:
     print("Authenticated encrypted pairing completed")
 
 
+async def write_packet(client, characteristic: str, packet: bytes, retries: int) -> None:
+    retries = max(0, retries)
+    for attempt in range(retries + 1):
+        try:
+            await client.write_gatt_char(characteristic, packet, response=True)
+            return
+        except OSError:
+            if attempt >= retries or not client.is_connected:
+                raise
+            delay = 0.5 * (attempt + 1)
+            print(f"BLE write was interrupted; retrying the same packet in {delay:g}s ...")
+            await asyncio.sleep(delay)
+
+
 async def send(args: argparse.Namespace) -> None:
     try:
         from bleak import BleakClient, BleakScanner
@@ -260,18 +274,22 @@ async def send(args: argparse.Namespace) -> None:
         await client.start_notify(TX_CHARACTERISTIC_UUID, on_reader_packet)
 
         sequence = secrets.randbits(32)
-        await client.write_gatt_char(
-            RX_CHARACTERISTIC_UUID, make_packet(STREAM_RESET, sequence), response=True
+        await write_packet(
+            client,
+            RX_CHARACTERISTIC_UUID,
+            make_packet(STREAM_RESET, sequence),
+            args.write_retries,
         )
         sequence = (sequence + 1) & 0xFFFFFFFF
 
         async for raw_text in text_source(args.source, args.demo_delay):
             clean_text = clean_display_text(raw_text)
             for payload in utf8_chunks(clean_text, append_limit):
-                await client.write_gatt_char(
+                await write_packet(
+                    client,
                     RX_CHARACTERISTIC_UUID,
                     make_packet(STREAM_APPEND, sequence, payload),
-                    response=True,
+                    args.write_retries,
                 )
                 sequence = (sequence + 1) & 0xFFFFFFFF
                 if args.packet_delay:
@@ -294,7 +312,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--address", help="BLE address; omit to scan by advertised name")
     parser.add_argument("--scan-timeout", type=float, default=15.0)
     parser.add_argument("--connect-timeout", type=float, default=60.0)
-    parser.add_argument("--packet-delay", type=float, default=0.03)
+    parser.add_argument(
+        "--packet-delay",
+        type=float,
+        default=0.0,
+        help="optional diagnostic pause after each acknowledged packet (default: none)",
+    )
+    parser.add_argument("--write-retries", type=int, default=3)
     parser.add_argument("--demo-delay", type=float, default=1.0)
     parser.add_argument("--wait-after", type=float, default=120.0)
     parser.add_argument("--unpair", action="store_true", help="remove the Windows bond and exit")

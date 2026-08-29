@@ -8,7 +8,7 @@ namespace {
 
 constexpr uint8_t MAGIC_0 = 'X';
 constexpr uint8_t MAGIC_1 = 'T';
-constexpr uint8_t PROTOCOL_VERSION = 1;
+constexpr uint8_t PROTOCOL_VERSION = 2;
 
 uint16_t readLe16(const uint8_t* data) {
   return static_cast<uint16_t>(data[0]) | (static_cast<uint16_t>(data[1]) << 8U);
@@ -52,9 +52,7 @@ bool allowedCodepoint(const uint32_t cp) {
   return cp >= 0x20 && cp != 0x7F && !(cp >= 0x80 && cp <= 0x9F);
 }
 
-bool isUtf8Continuation(const char value) {
-  return (static_cast<uint8_t>(value) & 0xC0U) == 0x80U;
-}
+bool isUtf8Continuation(const char value) { return (static_cast<uint8_t>(value) & 0xC0U) == 0x80U; }
 
 }  // namespace
 
@@ -116,8 +114,8 @@ bool isValidCommandText(const uint8_t* data, const size_t length) {
 
 namespace {
 
-size_t encodePacket(const PacketType type, const uint8_t* payload, const size_t payloadLength,
-                    const uint32_t sequence, uint8_t* output, const size_t capacity) {
+size_t encodePacket(const PacketType type, const uint8_t* payload, const size_t payloadLength, const uint32_t sequence,
+                    uint8_t* output, const size_t capacity) {
   const size_t packetLength = PACKET_HEADER_BYTES + payloadLength;
   if (!output || capacity < packetLength || packetLength > MAX_PACKET_BYTES) return 0;
 
@@ -141,8 +139,8 @@ size_t encodeActionPacket(const Action action, const uint32_t sequence, uint8_t*
   return encodePacket(PacketType::ACTION, &payload, 1, sequence, output, capacity);
 }
 
-size_t encodeCommandPacket(const uint8_t* command, const size_t commandLength, const uint32_t sequence,
-                           uint8_t* output, const size_t capacity) {
+size_t encodeCommandPacket(const uint8_t* command, const size_t commandLength, const uint32_t sequence, uint8_t* output,
+                           const size_t capacity) {
   if (!isValidCommandText(command, commandLength)) return 0;
   return encodePacket(PacketType::COMMAND, command, commandLength, sequence, output, capacity);
 }
@@ -180,6 +178,8 @@ AcceptResult TextStreamReceiver::accept(const uint8_t* packet, const size_t leng
       return acceptReset(sequence, payloadLength);
     case PacketType::STREAM_APPEND:
       return acceptAppend(sequence, packet + PACKET_HEADER_BYTES, payloadLength);
+    case PacketType::STREAM_TRUNCATE:
+      return acceptTruncate(sequence, packet + PACKET_HEADER_BYTES, payloadLength);
     case PacketType::ACTION:
     case PacketType::COMMAND:
     default:
@@ -223,6 +223,34 @@ AcceptResult TextStreamReceiver::acceptAppend(const uint32_t sequence, const uin
   buffer_[currentLength_] = '\0';
   expectedSequence_++;
   return AcceptResult::TEXT_APPENDED;
+}
+
+AcceptResult TextStreamReceiver::acceptTruncate(const uint32_t sequence, const uint8_t* payload,
+                                                const size_t payloadLength) {
+  if (!synchronized_) return AcceptResult::NEEDS_RESET;
+  if (sequence == expectedSequence_ - 1U) return AcceptResult::DUPLICATE_IGNORED;
+  if (sequence != expectedSequence_) {
+    synchronized_ = false;
+    return AcceptResult::OUT_OF_ORDER;
+  }
+  if (!payload || payloadLength != sizeof(uint16_t)) return AcceptResult::INVALID_PACKET;
+
+  const size_t bytesToRemove = readLe16(payload);
+  if (bytesToRemove == 0 || bytesToRemove > currentLength_) {
+    synchronized_ = false;
+    return AcceptResult::INVALID_TRUNCATE;
+  }
+
+  const size_t newLength = currentLength_ - bytesToRemove;
+  if (newLength > 0 && isUtf8Continuation(buffer_[newLength])) {
+    synchronized_ = false;
+    return AcceptResult::INVALID_TRUNCATE;
+  }
+
+  currentLength_ = newLength;
+  buffer_[currentLength_] = '\0';
+  expectedSequence_++;
+  return AcceptResult::TEXT_TRUNCATED;
 }
 
 void TextStreamReceiver::discardOldest(const size_t bytesNeeded) {

@@ -40,13 +40,10 @@ struct VisualLine {
   size_t nextStart = 0;
 };
 
-bool isUtf8Continuation(const char value) {
-  return (static_cast<uint8_t>(value) & 0xC0U) == 0x80U;
-}
+bool isUtf8Continuation(const char value) { return (static_cast<uint8_t>(value) & 0xC0U) == 0x80U; }
 
 VisualLine prepareVisualLine(const GfxRenderer& renderer, const int fontId, const char* source, const size_t textLength,
-                             const size_t start, const int maxWidth,
-                             std::array<char, DISPLAY_LINE_BYTES>& line) {
+                             const size_t start, const int maxWidth, std::array<char, DISPLAY_LINE_BYTES>& line) {
   size_t logicalEnd = start;
   while (logicalEnd < textLength && source[logicalEnd] != '\n') ++logicalEnd;
 
@@ -103,8 +100,7 @@ size_t countVisualLines(const GfxRenderer& renderer, const int fontId, const cha
 }
 
 size_t visualLineStart(const GfxRenderer& renderer, const int fontId, const char* text, const size_t textLength,
-                       const int maxWidth, const size_t targetIndex,
-                       std::array<char, DISPLAY_LINE_BYTES>& line) {
+                       const int maxWidth, const size_t targetIndex, std::array<char, DISPLAY_LINE_BYTES>& line) {
   size_t index = 0;
   size_t cursor = 0;
   while (cursor <= textLength && index < targetIndex) {
@@ -180,9 +176,9 @@ void BleTerminalActivity::openCommandKeyboard() {
 
   commandSendFailed_ = false;
   auto keyboard = makeUniqueNoThrow<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_TERMINAL_COMMAND), "",
-                                                            maxLength, InputType::Text,
-                                                            /*showHeaderKeyboardToggle=*/true,
-                                                            /*enableSystemLanguageSwitch=*/true);
+                                                           maxLength, InputType::Text,
+                                                           /*showHeaderKeyboardToggle=*/true,
+                                                           /*enableSystemLanguageSwitch=*/true);
   if (!keyboard) {
     LOG_ERR("BLE_TERM", "Unable to allocate command keyboard");
     return;
@@ -195,9 +191,8 @@ void BleTerminalActivity::openCommandKeyboard() {
     // OK/Enter submits exactly one line. An empty line reuses the existing
     // allow-listed Enter action; non-empty text is a COMMAND whose receiver
     // appends the terminal Enter key after injecting the payload.
-    const bool sent = keyboardResult->text.empty()
-                          ? transport_.sendAction(ble_terminal::Action::SUBMIT_INPUT)
-                          : transport_.sendCommand(keyboardResult->text);
+    const bool sent = keyboardResult->text.empty() ? transport_.sendAction(ble_terminal::Action::SUBMIT_INPUT)
+                                                   : transport_.sendCommand(keyboardResult->text);
     if (!sent) {
       commandSendFailed_ = true;
       markScreenDirty(millis());
@@ -208,8 +203,8 @@ void BleTerminalActivity::openCommandKeyboard() {
 int BleTerminalActivity::terminalFontId() const { return TERMINAL_FONT_IDS[fontSizeIndex_]; }
 
 void BleTerminalActivity::changeFontSize(const int direction) {
-  const int nextIndex = std::clamp(static_cast<int>(fontSizeIndex_) + direction, 0,
-                                   static_cast<int>(TERMINAL_FONT_IDS.size()) - 1);
+  const int nextIndex =
+      std::clamp(static_cast<int>(fontSizeIndex_) + direction, 0, static_cast<int>(TERMINAL_FONT_IDS.size()) - 1);
   if (nextIndex == fontSizeIndex_) return;
   fontSizeIndex_ = static_cast<uint8_t>(nextIndex);
   requestUpdate();
@@ -228,15 +223,14 @@ void BleTerminalActivity::scrollPage(const int direction) {
   const size_t textLength = receiver_.currentLength();
   if (textLength > 0) {
     const char* text = receiver_.currentText();
-    const size_t totalLines =
-        countVisualLines(renderer, terminalFontId(), text, textLength, bodyWidth, displayLine_);
+    const size_t totalLines = countVisualLines(renderer, terminalFontId(), text, textLength, bodyWidth, displayLine_);
     const size_t visibleLines = static_cast<size_t>(maxLines);
     const size_t tailIndex = totalLines > visibleLines ? totalLines - visibleLines : 0;
-    const size_t currentIndex =
-        followTail_ ? tailIndex
-                    : std::min(visualLineIndexAtOrBefore(renderer, terminalFontId(), text, textLength, bodyWidth,
-                                                         viewportStart_, displayLine_),
-                               tailIndex);
+    const size_t currentIndex = followTail_
+                                    ? tailIndex
+                                    : std::min(visualLineIndexAtOrBefore(renderer, terminalFontId(), text, textLength,
+                                                                         bodyWidth, viewportStart_, displayLine_),
+                                               tailIndex);
     const size_t pageLines = std::max<size_t>(1, visibleLines - 1);
 
     size_t targetIndex = currentIndex;
@@ -249,8 +243,8 @@ void BleTerminalActivity::scrollPage(const int direction) {
     const bool nextFollowTail = targetIndex == tailIndex;
     if (targetIndex != currentIndex || nextFollowTail != followTail_) {
       followTail_ = nextFollowTail;
-      viewportStart_ = visualLineStart(renderer, terminalFontId(), text, textLength, bodyWidth, targetIndex,
-                                       displayLine_);
+      viewportStart_ =
+          visualLineStart(renderer, terminalFontId(), text, textLength, bodyWidth, targetIndex, displayLine_);
       changed = true;
     }
   }
@@ -324,14 +318,15 @@ void BleTerminalActivity::loop() {
     if (!transcriptMutex_ || xSemaphoreTake(transcriptMutex_, portMAX_DELAY) != pdTRUE) continue;
 
     const ble_terminal::AcceptResult result = receiver_.accept(packet.bytes.data(), packet.length);
-    const bool streamChanged =
-        result == ble_terminal::AcceptResult::STREAM_RESET || result == ble_terminal::AcceptResult::TEXT_APPENDED;
+    const bool streamChanged = result == ble_terminal::AcceptResult::STREAM_RESET ||
+                               result == ble_terminal::AcceptResult::TEXT_APPENDED ||
+                               result == ble_terminal::AcceptResult::TEXT_TRUNCATED;
     const bool validStreamPacket = streamChanged || result == ble_terminal::AcceptResult::DUPLICATE_IGNORED;
-    const bool protocolNeedsReset = result == ble_terminal::AcceptResult::NEEDS_RESET ||
-                                    result == ble_terminal::AcceptResult::OUT_OF_ORDER ||
-                                    result == ble_terminal::AcceptResult::TOO_LARGE ||
-                                    result == ble_terminal::AcceptResult::INVALID_TEXT ||
-                                    result == ble_terminal::AcceptResult::UNSUPPORTED_VERSION;
+    const bool protocolNeedsReset =
+        result == ble_terminal::AcceptResult::NEEDS_RESET || result == ble_terminal::AcceptResult::OUT_OF_ORDER ||
+        result == ble_terminal::AcceptResult::TOO_LARGE || result == ble_terminal::AcceptResult::INVALID_TEXT ||
+        result == ble_terminal::AcceptResult::INVALID_TRUNCATE ||
+        result == ble_terminal::AcceptResult::UNSUPPORTED_VERSION;
 
     const size_t discardedBytes = receiver_.lastDiscardedBytes();
     if (result == ble_terminal::AcceptResult::STREAM_RESET) {
@@ -469,9 +464,8 @@ void BleTerminalActivity::render(RenderLock&&) {
             Rect{metrics.contentSidePadding, codeY + codeLineHeight + metrics.verticalSpacing, bodyWidth, hintHeight},
             UI_10_FONT_ID, tr(STR_TERMINAL_BLE_PAIRING_HINT), 2);
       } else {
-        UITheme::drawCenteredWrappedText(
-            renderer, Rect{metrics.contentSidePadding, bodyTop, bodyWidth, bodyHeight}, UI_10_FONT_ID,
-            statusMessage.data(), 5);
+        UITheme::drawCenteredWrappedText(renderer, Rect{metrics.contentSidePadding, bodyTop, bodyWidth, bodyHeight},
+                                         UI_10_FONT_ID, statusMessage.data(), 5);
       }
     } else {
       const char* text = receiver_.currentText();
@@ -480,9 +474,9 @@ void BleTerminalActivity::render(RenderLock&&) {
       const size_t tailIndex = totalLines > visibleLines ? totalLines - visibleLines : 0;
       size_t firstIndex = tailIndex;
       if (!followTail_) {
-        firstIndex = std::min(visualLineIndexAtOrBefore(renderer, fontId, text, textLength, bodyWidth, viewportStart_,
-                                                       displayLine_),
-                              tailIndex);
+        firstIndex = std::min(
+            visualLineIndexAtOrBefore(renderer, fontId, text, textLength, bodyWidth, viewportStart_, displayLine_),
+            tailIndex);
         viewportStart_ = visualLineStart(renderer, fontId, text, textLength, bodyWidth, firstIndex, displayLine_);
       }
 

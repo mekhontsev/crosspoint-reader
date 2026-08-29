@@ -12,7 +12,9 @@ The Termux helper obtains a normalized plain-text view from `tmux`. Android
 sends one `STREAM_RESET` when a connection starts, followed by ordered
 `STREAM_APPEND` packets. For an append-only change it sends only the new suffix.
 If cursor movement, line editing, screen clearing, or another redraw changes
-older text, it sends a new reset followed by a bounded current snapshot.
+older tail text, Android sends `STREAM_TRUNCATE` for only the replaced UTF-8
+bytes and then appends the new tail. A bounded reset is retained as a fallback
+when the change begins before the reader's locally cached window.
 
 The reader keeps the newest 32,768 UTF-8 bytes. When the buffer fills, it drops
 old complete lines first. BLE reception and e-ink refresh are independent: the
@@ -91,9 +93,13 @@ without stream data.
 
 | Role | UUID | Properties |
 |---|---|---|
-| Service | `6f2c8f10-7f7a-4f1e-a2a6-8e8b7b3f6c01` | Primary |
-| Android to reader | `6f2c8f10-7f7a-4f1e-a2a6-8e8b7b3f6c02` | Authenticated encrypted write with response |
-| Reader to Android | `6f2c8f10-7f7a-4f1e-a2a6-8e8b7b3f6c03` | Indicate only after authenticated encryption |
+| Service | `6f2c8f10-7f7a-4f1e-a2a6-8e8b7b3f6c11` | Primary |
+| Android to reader | `6f2c8f10-7f7a-4f1e-a2a6-8e8b7b3f6c12` | Authenticated encrypted write with response |
+| Reader to Android | `6f2c8f10-7f7a-4f1e-a2a6-8e8b7b3f6c13` | Indicate only after authenticated encryption |
+
+Protocol v2 uses distinct UUIDs so a v2 APK cannot silently write packets to
+reset-only v1 firmware. The BLE bond is independent of these service UUIDs and
+can still be reused after both components are upgraded.
 
 Write with response supplies backpressure for the reader's fixed eight-packet
 queue. Android sends the next packet immediately after the acknowledgement; it
@@ -110,7 +116,7 @@ Android must not split a UTF-8 code point between append packets.
 | Offset | Size | Field |
 |---:|---:|---|
 | 0 | 2 | Magic `XT` |
-| 2 | 1 | Protocol version, currently `1` |
+| 2 | 1 | Protocol version, currently `2` |
 | 3 | 1 | Packet type |
 | 4 | 4 | Sequence number |
 | 8 | 2 | Payload length |
@@ -131,6 +137,10 @@ Packet types:
   The bridge injects the payload into its terminal session and then injects
   Enter. Pressing Enter on an empty reader input sends the existing `enter`
   action instead.
+- `STREAM_TRUNCATE` (`5`): a two-byte unsigned little-endian count of UTF-8
+  bytes to remove from the end of the reader buffer. The count must be nonzero,
+  no larger than the current text, and leave the buffer on a UTF-8 code-point
+  boundary. It participates in the same ordered sequence as append packets.
 
 Display text permits UTF-8, newline, and horizontal tab. NUL, carriage return,
 ESC, C0/C1 controls, overlong encodings, surrogates, and invalid Unicode are
@@ -163,7 +173,7 @@ IPC, lifecycle, and acceptance criteria are specified in
 4. Enable indications on the reader-to-Android characteristic and wait for the
    subscription operation to complete.
 5. Pick any 32-bit initial sequence, send `STREAM_RESET`, then advance the
-   sequence for every append packet.
+   sequence for every truncate or append packet.
 6. Send the newest sanitized snapshot in independently valid UTF-8 chunks using
    write-with-response. Never split a code point. Do not advance the sequence
    after a failed write; retry the same packet after backpressure.
@@ -188,7 +198,10 @@ state with `capture-pane`. It compares that state with the previous one:
 
 - identical capture: send nothing;
 - previous capture is a prefix: send only the suffix;
-- any older text changed: replace the bounded snapshot with reset plus appends.
+- existing tail text changed: truncate the changed reader tail and append its
+  replacement;
+- a change predates the reader's retained window: replace the bounded snapshot
+  with reset plus appends.
 
 For reader input, the helper passes command text as a literal `tmux send-keys`
 argument and then sends Enter separately. The empty-submit action sends Enter.
@@ -207,7 +220,7 @@ The Termux helper maintains a candidate capture and a published capture:
 
 - Pane output only marks the candidate dirty; it does not enqueue BLE data.
 - Captures are debounced and normalized before comparison.
-- The newest one or two rows are treated as a volatile tail while they keep
+- The newest twenty rows are treated as a volatile tail while they keep
   changing. They are published only after remaining unchanged for 1.5 seconds.
 - Stable rows above that tail may be published while the animation continues.
 - A changed published snapshot is forwarded immediately after debounce. Its BLE

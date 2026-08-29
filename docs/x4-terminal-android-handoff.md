@@ -15,7 +15,7 @@ Build two separately installable/runnable components:
    foreground connection service.
 
 Use Python 3 and its standard library for the first Termux helper, plus the
-external `tmux` executable. Use Kotlin and the platform Android Bluetooth APIs
+external `tmux` executable. Use Java and the platform Android Bluetooth APIs
 for the APK. Keep the protocol layers free of UI dependencies so either choice
 can be replaced later without changing the wire or IPC contracts.
 
@@ -40,9 +40,9 @@ of the user's shell/Codex session.
 | E-ink refresh throttling | X4 reader |
 
 The Termux helper sends complete *published snapshots* to the APK. The APK, not
-the helper, compares a snapshot with the reader shadow and chooses between an
-append and a reset. This keeps every BLE state transition in one process and
-makes reconnect replay deterministic.
+the helper, compares a snapshot with the confirmed source and reader shadows and
+chooses append, tail truncate plus append, or reset. This keeps every BLE state
+transition in one process and makes reconnect replay deterministic.
 
 ## Runtime data flow
 
@@ -55,9 +55,9 @@ makes reconnect replay deterministic.
 5. Opening Terminal makes the reader advertise the service UUID. The APK finds
    it, securely connects, enables indications, sends `STREAM_RESET`, and replays
    the newest snapshot.
-6. Later snapshots are sent as an append only when they start with the APK's
-   confirmed reader shadow. Otherwise the APK sends a reset and the complete
-   newest snapshot.
+6. Later append-only snapshots send just their new suffix. A redraw truncates
+   and replaces only the changed tail while preserving older reader pages. A
+   reset is used only when the change predates the retained reader window.
 7. Closing Terminal disconnects BLE. The APK returns to low-power filtered
    scanning; it does not stop the `tmux` session or discard the newest snapshot.
 
@@ -116,10 +116,10 @@ Maintain `candidate` and `published` snapshots:
 
 - coalesce pane-output signals for roughly 150-250 ms before capture;
 - identical normalized captures do nothing;
-- treat the newest two rows as volatile while they change;
+- treat the newest twenty rows as volatile while they change;
 - publish newly stable rows above that volatile tail without waiting for an
   animation to finish;
-- publish the final two rows after the candidate has remained unchanged for
+- publish the final volatile rows after the candidate has remained unchanged for
   1.5 seconds;
 - send every published snapshot to the APK immediately, with no artificial
   three-second BLE delay.
@@ -268,7 +268,7 @@ Android callback before starting the next:
 5. Enable local notifications and write `0x0002` to the CCC descriptor to enable
    indications; wait for descriptor-write success.
 6. Start a new random 32-bit packet sequence.
-7. Send `STREAM_RESET`, then replay the latest snapshot.
+7. Send `STREAM_RESET`, then replay the newest UTF-8-safe 4 KiB whole-line tail.
 
 Every characteristic write uses write-with-response. Keep exactly one write in
 flight and send the next packet immediately after its successful callback; add
@@ -285,15 +285,18 @@ write timeout, close GATT, reconnect, start a new sequence, reset, and replay.
 
 While a transfer is running, keep only the newest pending IPC snapshot. After
 the current write succeeds, compare that newest snapshot against the confirmed
-reader shadow:
+source and reader shadows:
 
 - equal: no write;
-- starts with shadow: append only the suffix;
-- otherwise: reset and replay the complete snapshot.
+- source extends unchanged: append only the suffix;
+- only the retained tail changed: send `STREAM_TRUNCATE`, then append its
+  replacement;
+- the change begins before the retained reader window: reset and replay the
+  bounded 4 KiB tail.
 
-Do not send the next snapshot's append packets in the middle of an older reset
-plan. A reset is an ordinary sequenced packet and may be sent again during an
-existing connection whenever the published snapshot is no longer append-only.
+Do not send the next snapshot's packets in the middle of an older write plan.
+Reset, truncate, and append are ordinary sequenced packets; a confirmed plan
+updates both shadows before the next snapshot is compared.
 
 Validate reader indications with the same header, length, version, UTF-8, and
 allow-list rules as the firmware. Android confirms GATT indications through its

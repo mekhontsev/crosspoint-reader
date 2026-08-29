@@ -152,6 +152,10 @@ screen at a time. Holding Page Down for 700 ms jumps directly to the live tail.
 The reader is the BLE peripheral and Android is the central. The Android bridge
 must serialize these steps for every connection:
 
+The normative two-component APK/Termux architecture, authenticated loopback
+IPC, lifecycle, and acceptance criteria are specified in
+[`x4-terminal-android-handoff.md`](x4-terminal-android-handoff.md).
+
 1. Scan by the service UUID, not only by the display name.
 2. Connect and establish an authenticated LE Secure Connections bond. Reuse an
    existing valid bond when Android offers it.
@@ -187,9 +191,10 @@ state with `capture-pane`. It compares that state with the previous one:
 - any older text changed: replace the bounded snapshot with reset plus appends.
 
 For reader input, the helper passes command text as a literal `tmux send-keys`
-argument and then sends Enter separately. The empty-submit action sends Enter;
-the interrupt action sends `C-c`. It must use an argv-style process API rather
-than interpolate reader text into a shell command.
+argument and then sends Enter separately. The empty-submit action sends Enter.
+Current firmware emits no other action IDs; the remaining allow-listed IDs are
+reserved and must not be mapped to guessed keystrokes. The helper must use an
+argv-style process API rather than interpolate reader text into a shell command.
 
 ### Animation suppression
 
@@ -205,9 +210,9 @@ The Termux helper maintains a candidate capture and a published capture:
 - The newest one or two rows are treated as a volatile tail while they keep
   changing. They are published only after remaining unchanged for 1.5 seconds.
 - Stable rows above that tail may be published while the animation continues.
-- BLE publication is limited to once every 3 seconds and only when published
-  text changed. There is no maximum-latency rule that forces a volatile-only
-  change onto BLE.
+- A changed published snapshot is forwarded immediately after debounce. Its BLE
+  packets are sent as fast as write acknowledgements allow; only the e-ink
+  renderer, not BLE transport, has a three-second refresh limit.
 - When the terminal becomes stable, the final tail and prompt are published.
 
 This filtering belongs before BLE. Display-side coalescing alone would avoid

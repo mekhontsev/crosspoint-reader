@@ -1,5 +1,17 @@
 # CrossPoint Reader
 
+> [!WARNING]
+> **Unofficial experimental X4 Terminal fork.** This branch adds encrypted BLE
+> plain-text terminal mirroring for the **Xteink X4 Pro only**. It is not an
+> official CrossPoint release and is not supported by the upstream CrossPoint
+> project or Xteink. Do not install it on the X4, X3, or any other board.
+>
+> The reader firmware has been tested on one X4 Pro. The Android companion is
+> still under development; the current end-to-end client is the Windows smoke
+> test. Read the [X4 Terminal user guide](docs/x4-terminal-user-guide.md) and its
+> recovery warnings before installing. Developers implementing the Android side
+> should start with the [Android handoff](docs/x4-terminal-android-handoff.md).
+
 [![Fund contributors](https://img.shields.io/badge/%F0%9F%91%91_Fund_contributors-royalty.dev-BB953A?style=for-the-badge&labelColor=1a1a1a)](https://app.royalty.dev/crosspoint-reader/crosspoint-reader)
 
 CrossPoint is open-source e-reader firmware - community-built, fully hackable, free forever. It's maintained by a growing community of developers and readers who believe your device should do what you want - not what a manufacturer decided for you.
@@ -131,6 +143,12 @@ Conversion runs the firmware repo's `lib/EpdFont/scripts/fontconvert_sdcard.py` 
 
 ## Documentation
 
+- [X4 Terminal user guide](./docs/x4-terminal-user-guide.md) — scope, safety,
+  installation, controls, rollback, and current limitations for this fork
+- [X4 Terminal BLE protocol](./docs/ble-terminal-protocol.md) — firmware wire
+  protocol and desktop smoke test
+- [X4 Terminal Android handoff](./docs/x4-terminal-android-handoff.md) — normative
+  APK/Termux architecture and acceptance tests
 - [User Guide](./USER_GUIDE.md)
 - [Web server usage](./docs/webserver.md)
 - [Web server endpoints](./docs/webserver-endpoints.md)

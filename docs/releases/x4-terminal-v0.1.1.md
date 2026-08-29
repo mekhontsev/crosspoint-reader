@@ -1,8 +1,8 @@
-# DRAFT — X4 Terminal v0.1.1
+# X4 Terminal v0.1.1 — hardware-tested candidate
 
 > [!CAUTION]
-> Do not publish this release until its BLE-session exit path has passed
-> hardware testing and the notes retain the unverified-recovery warning.
+> Early-boot X4 Pro SD recovery remains unverified. Keep a known-good firmware
+> image available and do not publish a binary release without that warning.
 
 Corrective hardware-test candidate for **Xteink X4 Pro only**. It supersedes
 the rejected v0.1.0 candidate, which reset while returning Home after a BLE
@@ -23,13 +23,16 @@ The firmware identifies itself as
   pressure is logged rather than converted into an abort.
 - Add teardown checkpoints to crash logs.
 
-## Required hardware check
+## Hardware check
 
-1. Boot and confirm the v0.1.1 version string.
-2. Enter Terminal and receive text over an existing authenticated bond.
-3. Exit immediately after transfer and again after the client disconnects.
-4. Repeat enter, reconnect, receive, and exit at least three times.
-5. Confirm every exit returns Home without a crash report.
+Passed on an Xteink X4 Pro on 2026-08-29:
+
+1. Booted with the v0.1.1 version string.
+2. Received text over an existing authenticated Windows bond.
+3. Returned Home after the client disconnected.
+4. Returned Home while the BLE connection was still active.
+5. Re-entered Terminal, reconnected, received text, and returned Home in
+   repeated cycles without a crash report.
 
 Early-boot X4 Pro SD recovery remains unverified on hardware. The Android APK
 and Termux helper are not included yet.

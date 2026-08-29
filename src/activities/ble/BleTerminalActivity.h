@@ -31,7 +31,7 @@ class BleTerminalActivity final : public Activity {
   static constexpr uint32_t TRANSFER_IDLE_MS = 2000;
   static constexpr size_t DISPLAY_LINE_BYTES = 256;
 
-  ble_terminal::BleTerminalTransport transport_;
+  ble_terminal::BleTerminalTransport& transport_;
   std::array<char, ble_terminal::MAX_TRANSCRIPT_BYTES + 1> transcript_{};
   std::array<char, DISPLAY_LINE_BYTES> displayLine_{};
   ble_terminal::TextStreamReceiver receiver_;

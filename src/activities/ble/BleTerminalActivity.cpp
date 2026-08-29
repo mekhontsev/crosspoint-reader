@@ -132,6 +132,7 @@ size_t visualLineIndexAtOrBefore(const GfxRenderer& renderer, const int fontId, 
 
 BleTerminalActivity::BleTerminalActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
     : Activity("BleTerminal", renderer, mappedInput),
+      transport_(ble_terminal::sharedTransport()),
       receiver_(transcript_.data(), transcript_.size()),
       transcriptMutex_(xSemaphoreCreateMutexStatic(&transcriptMutexStorage_)) {}
 
@@ -157,12 +158,14 @@ void BleTerminalActivity::onEnter() {
 }
 
 void BleTerminalActivity::onExit() {
+  LOG_INF("BLE_TERM", "Terminal activity exit: stopping transport");
   transport_.stop();
   if (transcriptMutex_ && xSemaphoreTake(transcriptMutex_, portMAX_DELAY) == pdTRUE) {
     receiver_.clear();
     needsReset_ = false;
     xSemaphoreGive(transcriptMutex_);
   }
+  LOG_INF("BLE_TERM", "Terminal activity exit: transport stopped");
   Activity::onExit();
 }
 
@@ -268,6 +271,12 @@ void BleTerminalActivity::jumpToTail() {
 
 void BleTerminalActivity::loop() {
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+    // ActivityManager constructs the replacement before calling onExit(), and
+    // calls onExit() while holding RenderLock. Release NimBLE first, outside
+    // that lock, so Home allocation has the radio heap back and teardown cannot
+    // block the render pipeline. onExit() calls stop() again as a cheap no-op.
+    LOG_INF("BLE_TERM", "Back requested: stopping transport before Home");
+    transport_.stop();
     onGoHome(HomeMenuItem::TERMINAL);
     return;
   }

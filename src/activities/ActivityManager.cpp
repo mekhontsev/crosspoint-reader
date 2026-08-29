@@ -328,7 +328,12 @@ void ActivityManager::goHome(HomeMenuItem initialMenuItem, bool cleanInitialRefr
       initialMenuItem = HomeMenuItem::SETTINGS_MENU;
     }
   }
-  replaceActivity(std::make_unique<HomeActivity>(renderer, mappedInput, initialMenuItem, cleanInitialRefresh));
+  auto activity = makeUniqueNoThrow<HomeActivity>(renderer, mappedInput, initialMenuItem, cleanInitialRefresh);
+  if (!activity) {
+    LOG_ERR("ACT", "OOM: Home activity");
+    return;
+  }
+  replaceActivity(std::move(activity));
 }
 void ActivityManager::goToCrashReport() { replaceActivity(std::make_unique<CrashActivity>(renderer, mappedInput)); }
 

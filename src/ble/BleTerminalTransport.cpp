@@ -72,6 +72,11 @@ BleTerminalTransport::BleTerminalTransport() {
 
 BleTerminalTransport::~BleTerminalTransport() { stop(); }
 
+BleTerminalTransport& sharedTransport() {
+  static BleTerminalTransport transport;
+  return transport;
+}
+
 void BleTerminalTransport::setStatus(const Status status) {
   if (status_.exchange(status) != status) statusRevision_++;
 }
@@ -189,30 +194,38 @@ void BleTerminalTransport::stop() {
   }
 
   stopping_.store(true);
-  ble_gap_adv_stop();
-  const uint16_t connectionHandle = connectionHandle_.load();
-  if (connectionHandle != NO_CONNECTION) ble_gap_terminate(connectionHandle, BLE_ERR_REM_USER_CONN_TERM);
+  LOG_INF("BLE_TERM", "Stopping NimBLE host");
 
   if (hostTaskStarted_) {
+    // nimble_port_stop() performs the complete host stop procedure, including
+    // active GAP procedures, and waits until its stop event has been serviced.
+    // Do not separately stop advertising/terminate a connection: racing those
+    // asynchronous GAP events against the host stop caused exit-time resets.
     const int stopResult = nimble_port_stop();
-    if (stopResult != 0) LOG_ERR("BLE_TERM", "NimBLE stop failed (%d)", stopResult);
-
-    constexpr int HOST_STOP_WAIT_STEPS = 100;
-    for (int step = 0; hostTaskRunning_.load() && step < HOST_STOP_WAIT_STEPS; ++step) {
-      vTaskDelay(pdMS_TO_TICKS(10));
+    if (stopResult != 0) {
+      LOG_ERR("BLE_TERM", "NimBLE stop failed (%d)", stopResult);
+      stopping_.store(false);
+      setStatus(Status::ERROR);
+      return;
     }
+    LOG_INF("BLE_TERM", "NimBLE host stopped");
   }
 
   if (stackInitialized_) {
     const esp_err_t deinitResult = nimble_port_deinit();
-    if (deinitResult != ESP_OK) LOG_ERR("BLE_TERM", "NimBLE deinit failed (%d)", deinitResult);
+    if (deinitResult != ESP_OK) {
+      LOG_ERR("BLE_TERM", "NimBLE deinit failed (%d)", deinitResult);
+      stopping_.store(false);
+      setStatus(Status::ERROR);
+      return;
+    }
+    LOG_INF("BLE_TERM", "NimBLE port deinitialized");
   }
 
   BleTerminalTransport* expected = this;
   active_.compare_exchange_strong(expected, nullptr);
   stackInitialized_ = false;
   hostTaskStarted_ = false;
-  hostTaskRunning_ = false;
   connectionHandle_ = NO_CONNECTION;
   indicationsEnabled_ = false;
   setPairingPasskey(0);
@@ -304,10 +317,7 @@ bool BleTerminalTransport::isConnectionSecure(const uint16_t connectionHandle) {
 }
 
 void BleTerminalTransport::hostTask(void*) {
-  BleTerminalTransport* instance = active_.load();
-  if (instance) instance->hostTaskRunning_ = true;
   nimble_port_run();
-  if (instance) instance->hostTaskRunning_ = false;
   nimble_port_freertos_deinit();
 }
 

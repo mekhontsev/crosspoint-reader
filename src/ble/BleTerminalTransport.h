@@ -58,7 +58,6 @@ class BleTerminalTransport final {
   std::atomic<uint32_t> pairingPasskey_{0};
   std::atomic<uint16_t> connectionHandle_{NO_CONNECTION};
   std::atomic<bool> indicationsEnabled_{false};
-  std::atomic<bool> hostTaskRunning_{false};
   std::atomic<bool> stopping_{false};
   std::atomic<bool> transferActive_{false};
   bool stackInitialized_ = false;
@@ -84,6 +83,11 @@ class BleTerminalTransport final {
   static int gattAccess(uint16_t connectionHandle, uint16_t attributeHandle, ble_gatt_access_ctxt* context,
                         void* argument);
 };
+
+// NimBLE finishes its FreeRTOS host task asynchronously after
+// nimble_port_stop(). Keep the transport alive across activity destruction so
+// a late host-task epilogue can never touch a freed BleTerminalActivity.
+BleTerminalTransport& sharedTransport();
 
 }  // namespace ble_terminal
 

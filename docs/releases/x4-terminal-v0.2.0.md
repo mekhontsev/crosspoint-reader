@@ -1,8 +1,8 @@
-# X4 Terminal v0.2.0 — tail replacement candidate
+# X4 Terminal v0.2.0 — tail replacement
 
 > [!CAUTION]
-> This candidate is not hardware-tested. Keep the v0.1.1 or another known-good
-> X4 Pro image available before installation.
+> Early-boot X4 Pro SD recovery remains unverified. Keep v0.1.1 or another
+> known-good X4 Pro image available before installation.
 
 Protocol-v2 candidate for **Xteink X4 Pro only**. It keeps locally cached pages
 when Codex or another terminal program redraws its current status area.
@@ -33,7 +33,12 @@ The firmware identifies itself as
   multi-page append, tail truncate, and replacement append; its packet
   self-test passes.
 
-## Hardware checks still required
+## Hardware verification
+
+Installed on a physical Xteink X4 Pro on 2026-08-29. The reader booted the
+`1.5.0-x4pro-x4terminal-v0.2.0` image and remained operational.
+
+## BLE checks still required
 
 1. Upgrade the firmware and confirm the existing BLE bond reconnects with the
    protocol-v2 Windows client, then with the APK.

@@ -13,18 +13,23 @@ from collections.abc import Iterable, Iterator
 
 
 DEVICE_NAME = "X4 Terminal"
-RX_CHARACTERISTIC_UUID = "6f2c8f10-7f7a-4f1e-a2a6-8e8b7b3f6c02"
-TX_CHARACTERISTIC_UUID = "6f2c8f10-7f7a-4f1e-a2a6-8e8b7b3f6c03"
+RX_CHARACTERISTIC_UUID = "6f2c8f10-7f7a-4f1e-a2a6-8e8b7b3f6c12"
+TX_CHARACTERISTIC_UUID = "6f2c8f10-7f7a-4f1e-a2a6-8e8b7b3f6c13"
 
 MAGIC = b"XT"
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 STREAM_RESET = 1
 STREAM_APPEND = 2
 ACTION = 3
 COMMAND = 4
+STREAM_TRUNCATE = 5
 PACKET_HEADER_BYTES = 10
 MAX_PACKET_BYTES = 244
-MAX_APPEND_BYTES = MAX_PACKET_BYTES - PACKET_HEADER_BYTES
+MAX_PAYLOAD_BYTES = MAX_PACKET_BYTES - PACKET_HEADER_BYTES
+
+DEMO_REPLACE_FROM = "Status: working...\n"
+DEMO_REPLACE_TO = "Status: complete\n"
+DEMO_HISTORY_LINES = 300
 
 ACTION_NAMES = {
     1: "interrupt",
@@ -49,11 +54,17 @@ ANSI_ESCAPE = re.compile(
 
 
 def make_packet(packet_type: int, sequence: int, payload: bytes = b"") -> bytes:
-    if len(payload) > MAX_APPEND_BYTES:
+    if len(payload) > MAX_PAYLOAD_BYTES:
         raise ValueError("payload is too large")
     return struct.pack(
         "<2sBBIH", MAGIC, PROTOCOL_VERSION, packet_type, sequence & 0xFFFFFFFF, len(payload)
     ) + payload
+
+
+def make_truncate_packet(sequence: int, bytes_to_remove: int) -> bytes:
+    if not 1 <= bytes_to_remove <= 0xFFFF:
+        raise ValueError("truncate length must fit a nonzero uint16")
+    return make_packet(STREAM_TRUNCATE, sequence, struct.pack("<H", bytes_to_remove))
 
 
 def clean_display_text(text: str) -> str:
@@ -109,11 +120,25 @@ def demo_source() -> Iterable[str]:
     yield "Only new UTF-8 text is being transferred.\n"
     yield "The reader should coalesce these packets into slow e-ink refreshes.\n"
     yield "Русский текст: соединение работает.\n"
+    yield "".join(f"History line {line:03d}: retained before tail replacement.\n" for line in range(1, DEMO_HISTORY_LINES + 1))
+    yield DEMO_REPLACE_FROM
 
 
 def run_self_test() -> None:
     reset = make_packet(STREAM_RESET, 7)
-    assert reset == b"XT\x01\x01\x07\x00\x00\x00\x00\x00"
+    assert reset == b"XT\x02\x01\x07\x00\x00\x00\x00\x00"
+    truncate = make_truncate_packet(8, len(DEMO_REPLACE_FROM.encode("utf-8")))
+    assert truncate == b"XT\x02\x05\x08\x00\x00\x00\x02\x00\x13\x00"
+    for invalid_length in (0, 0x10000):
+        try:
+            make_truncate_packet(9, invalid_length)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("invalid truncate length was accepted")
+    demo = "".join(demo_source())
+    assert demo.count("History line ") == DEMO_HISTORY_LINES
+    assert demo.endswith(DEMO_REPLACE_FROM)
     assert clean_display_text("a\x1b[31mred\x1b[0m\r\nb\x00") == "ared\nb"
     chunks = list(utf8_chunks("AЖ🙂B", 5))
     assert b"".join(chunks).decode("utf-8") == "AЖ🙂B"
@@ -295,6 +320,24 @@ async def send(args: argparse.Namespace) -> None:
                 if args.packet_delay:
                     await asyncio.sleep(args.packet_delay)
 
+        if args.source is None:
+            await write_packet(
+                client,
+                RX_CHARACTERISTIC_UUID,
+                make_truncate_packet(sequence, len(DEMO_REPLACE_FROM.encode("utf-8"))),
+                args.write_retries,
+            )
+            sequence = (sequence + 1) & 0xFFFFFFFF
+            for payload in utf8_chunks(DEMO_REPLACE_TO, append_limit):
+                await write_packet(
+                    client,
+                    RX_CHARACTERISTIC_UUID,
+                    make_packet(STREAM_APPEND, sequence, payload),
+                    args.write_retries,
+                )
+                sequence = (sequence + 1) & 0xFFFFFFFF
+            print("Protocol-v2 tail replacement sent")
+
         if args.wait_after:
             print(f"Transmission complete; waiting {args.wait_after:g} seconds for reader input ...")
             await asyncio.sleep(args.wait_after)
@@ -302,7 +345,7 @@ async def send(args: argparse.Namespace) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Send append-only UTF-8 text to the experimental X4 Terminal BLE screen."
+        description="Send protocol-v2 UTF-8 text to the experimental X4 Terminal BLE screen."
     )
     parser.add_argument(
         "source",

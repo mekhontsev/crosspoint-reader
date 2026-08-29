@@ -27,13 +27,21 @@ The firmware identifies itself as
   invalid ranges, sequence gaps, and duplicate truncates.
 - Android protocol tests cover byte vectors, separate source/reader shadows,
   short reconnect replay, and preservation of older local history.
+- The full `x4pro-ble-terminal` ESP32-S3 firmware build succeeds with 28.7%
+  static RAM and 88.6% of the application flash partition used.
+- The Windows smoke client uses the protocol-v2 UUIDs and exercises reset,
+  multi-page append, tail truncate, and replacement append; its packet
+  self-test passes.
 
 ## Hardware checks still required
 
-1. Upgrade both firmware and APK; confirm the existing BLE bond reconnects.
-2. Fill at least ten local pages, trigger repeated Codex status redraws, and
-   confirm Page Up still reaches the older pages.
-3. Confirm the APK sends truncate plus only the changed suffix, without repeated
+1. Upgrade the firmware and confirm the existing BLE bond reconnects with the
+   protocol-v2 Windows client, then with the APK.
+2. Receive the client's 300-line history and tail replacement, then confirm
+   Page Up still reaches the older pages and the tail reads `Status: complete`.
+3. Trigger repeated Codex status redraws and confirm Page Up still reaches the
+   older pages.
+4. Confirm the APK sends truncate plus only the changed suffix, without repeated
    4 KiB resets.
-4. Repeat Terminal exit/re-entry and verify the v0.1.1 exit-path correction.
-5. Monitor free heap and confirm it remains above 50 KiB while receiving text.
+5. Repeat Terminal exit/re-entry and verify the v0.1.1 exit-path correction.
+6. Monitor free heap and confirm it remains above 50 KiB while receiving text.

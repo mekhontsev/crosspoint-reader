@@ -26,7 +26,7 @@
 namespace {
 
 constexpr size_t DISPLAY_LINE_BYTES = 256;
-constexpr size_t HEADER_CONTROL_COUNT = 3;
+constexpr size_t HEADER_CONTROL_COUNT = 4;
 constexpr int HEADER_TITLE_GAP = 20;
 constexpr unsigned long CONTROL_RETRY_MS = 100;
 constexpr unsigned long CONTROL_SETTLE_MS = 250;
@@ -45,6 +45,26 @@ struct VisualLine {
 bool isUtf8Continuation(const char value) { return (static_cast<uint8_t>(value) & 0xC0U) == 0x80U; }
 
 bool frameIdBefore(const uint32_t first, const uint32_t second) { return static_cast<int32_t>(first - second) < 0; }
+
+bool pointInRect(const int x, const int y, const Rect& rect) {
+  return x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height;
+}
+
+void drawRefreshButton(const GfxRenderer& renderer, const Rect& button, const bool history) {
+  constexpr int glyphWidth = 24;
+  constexpr int halfGap = 3;
+  constexpr int arrowSize = 5;
+  const int left = button.x + (button.width - glyphWidth) / 2;
+  const int right = left + glyphWidth;
+  const int middle = button.y + button.height / 2;
+
+  renderer.drawRect(button.x, button.y, button.width, button.height);
+  renderer.drawLine(left, middle - halfGap, right, middle - halfGap);
+  renderer.drawLine(right - arrowSize, middle - halfGap - arrowSize, right, middle - halfGap);
+  renderer.drawLine(left, middle + halfGap, right, middle + halfGap);
+  renderer.drawLine(left, middle + halfGap, left + arrowSize, middle + halfGap + arrowSize);
+  if (history) renderer.fillRect(button.x + button.width - 7, button.y + 4, 4, 4);
+}
 
 VisualLine prepareVisualLine(const GfxRenderer& renderer, const int fontId, const char* source, const size_t textLength,
                              const size_t start, const int maxWidth, std::array<char, DISPLAY_LINE_BYTES>& line) {
@@ -375,6 +395,21 @@ void BleTerminalActivity::loop() {
       changeFontSize(1);
       return;
     }
+
+    const Rect refreshButton =
+        header_keyboard_button::layout(renderer, metrics, title, 3, HEADER_CONTROL_COUNT, HEADER_TITLE_GAP);
+    int touchX = 0;
+    int touchY = 0;
+    if (mappedInput.wasScreenLongPress(touchX, touchY)) {
+      if (pointInRect(touchX, touchY, refreshButton)) {
+        queueFrameRequest(ble_terminal::FrameRequest::CURRENT, selectedFrameId(), true);
+      }
+      return;
+    }
+    if (mappedInput.wasTapInRect(refreshButton.x, refreshButton.y, refreshButton.width, refreshButton.height)) {
+      queueFrameRequest(ble_terminal::FrameRequest::CURRENT, selectedFrameId());
+      return;
+    }
   }
 
   if (mappedInput.wasLongPressed(MappedInputManager::Button::Confirm, LONG_PRESS_MS)) {
@@ -523,6 +558,9 @@ void BleTerminalActivity::render(RenderLock&&) {
   header_keyboard_button::draw(
       renderer, header_keyboard_button::layout(renderer, metrics, title, 2, HEADER_CONTROL_COUNT, HEADER_TITLE_GAP),
       header_keyboard_button::Glyph::FONT_INCREASE);
+  drawRefreshButton(renderer,
+                    header_keyboard_button::layout(renderer, metrics, title, 3, HEADER_CONTROL_COUNT, HEADER_TITLE_GAP),
+                    !followLatest_);
 
   const int bodyTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
   const int bodyHeight = pageHeight - bodyTop - metrics.buttonHintsHeight;

@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+set -eu
+
+pio run -e x4pro-ble-terminal "$@"
+python3 scripts/verify_x4_terminal_artifact.py

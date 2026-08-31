@@ -25,6 +25,9 @@ or refreshing replace one pending automatic snapshot; intermediate snapshots are
 not queued. The reader sends `FRAME_STATUS(READY)` after an accepted frame has
 either finished its requested e-ink refresh or was cached without a refresh.
 Android does not begin another automatic frame before that status arrives.
+An optional Android-side minimum interval further limits automatic frames with
+the same latest-wins behavior. Current, history navigation, initial sync, and a
+tmux source change bypass that interval.
 
 ## Reader cache and navigation
 
@@ -41,6 +44,8 @@ current snapshot.
 Leaving Terminal stops BLE and frees the activity and cache. Re-entering Terminal
 starts a new connection. Its first frame carries `RESET_CACHE`, so stale frame IDs
 from an earlier Android process cannot be mixed with the new history.
+Selecting another tmux pane also sends its first frame with `RESET_CACHE` while
+leaving the BLE connection intact.
 
 ## Reader controls
 
@@ -51,6 +56,8 @@ from an earlier Android process cannot be mixed with the new history.
 - Hold Page Down for about 700 ms: return to the current live frame.
 - Keyboard icon: send one literal command followed by Enter. Empty input sends
   Enter only.
+- Refresh icon: touch equivalent of Confirm. A long touch requests Current with
+  a full refresh; its corner marker indicates history mode.
 - `-` / `+`: change the local terminal font.
 - Back: leave Terminal and stop the BLE stack.
 

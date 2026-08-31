@@ -41,5 +41,8 @@ Packet processing remains allocation-free.
   recovery, duplicate packets, UTF-8, and reader control encoding.
 - The exact `x4pro-ble-terminal` firmware profile and Android APK must build
   successfully before publishing artifacts.
+- Build firmware with `./bin/build-x4-terminal`; the wrapper rejects an
+  ordinary X4 Pro release image that does not contain the Terminal activity,
+  transport, and version markers.
 - A physical X4 Pro hardware pass covered boot, BLE reconnect, English and
   Russian frames, automatic scrolling, manual refresh, and history paging.

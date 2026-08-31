@@ -66,10 +66,11 @@ Install and configure the APK and helper as described in the bridge repository.
 Run the shell, SSH client, or Codex session in a named `tmux` pane, then start:
 
 ```sh
-x4term serve --target work:0.0
+x4term serve
 ```
 
-Enable the APK service and open **Terminal** on the reader. On the first
+Choose the tmux pane in the APK, enable the bridge service, and open
+**Terminal** on the reader. On the first
 connection the reader displays a random six-digit passkey; enter it in Android's
 system pairing dialog. The bond is reused later. Re-entering Terminal makes
 Android reconnect and send one current screen rather than replaying the session.
@@ -81,8 +82,12 @@ Android reconnect and send one current screen rather than replaying the session.
 - `-` and `+`: choose one of nine local IBM Plex Mono sizes, 8 through 24.
 - `EN` / system-language key inside the Terminal keyboard: switch between
   English and the supported layout matching the reader language.
+- Refresh icon: request Android's exact current screen. Hold the icon for a
+  full ghost-cleaning e-ink refresh. A small corner marker on this icon means
+  the reader is displaying history instead of following the latest screen.
 - Confirm: request Android's exact current screen. Use this after Codex or
-  another full-screen program has redrawn existing rows.
+  another full-screen program has redrawn existing rows. This remains the
+  physical-button fallback for devices that provide Confirm.
 - Hold Confirm for about 700 ms: request the current screen and use a full
   ghost-cleaning e-ink refresh.
 - Page Up: show the previous cached screen or request it from Android.
@@ -103,8 +108,15 @@ Android automatically sends rows that were appended or cleanly scrolled. If an
 already published row changes in place, Android treats the screen as animated:
 it keeps the newest snapshot but sends nothing until Confirm is pressed or a
 later capture demonstrates real upward progress. There is no periodic
-three-second animation replay. While the panel is busy Android keeps only the
-newest pending screen.
+three-second animation replay. While the panel is busy, automatic updates are
+paused, or the configured minimum interval has not elapsed, Android keeps only
+the newest pending screen. Manual Refresh and history navigation do not wait for
+that interval.
+
+The Android foreground service holds a partial wake lock while started. For
+reliable screen-off operation, set both X4 Terminal Bridge and Termux to
+unrestricted battery use on the phone; the helper also uses Termux:API's wake
+lock command when it is installed.
 
 Leaving Terminal clears the reader's local cache and stops BLE. Re-entering the
 screen causes the companion to reconnect and replay its latest snapshot.

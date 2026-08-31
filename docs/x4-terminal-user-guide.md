@@ -95,24 +95,28 @@ Android reconnect and send one current screen rather than replaying the session.
   physical-button fallback for devices that provide Confirm.
 - Hold Confirm for about 700 ms: request the current screen and use a full
   ghost-cleaning e-ink refresh.
-- Page Up: show the previous cached screen or request it from Android.
-- Page Down: show the next cached screen or request it from Android. On the
-  newest screen, Page Down refreshes Android's current snapshot.
+- Page Up: show the previous tmux scrollback page. The first use lazily loads a
+  bounded recent page set through Android.
+- Page Down: show the next scrollback page. Past the newest history page it
+  returns to Android's current snapshot.
 - Hold Page Down for about 700 ms: jump to the newest screen.
 - Back: leave Terminal, stop its BLE stack, and return directly to the main
   menu with **Plugins** selected.
 
-Cached paging and font changes are local. Paging contacts Android only when the
-adjacent screen is not in the four-frame reader cache.
+Font changes are local. Paging contacts Android only when the adjacent page is
+not in the four-frame reader cache. A jump to the newest screen transfers only
+that screen; it neither preloads nor forcibly clears the other three slots.
 
 ## Data, refresh, and power behavior
 
 The reader reports its text rows and columns to Android. For an ordinary shell
 pane, the helper may include only enough recent tmux scrollback to fill blank
-rows at the bottom of the reader; alternate-screen programs are captured
-strictly from their current viewport. Android stores up to 64 accepted text
-screens; the reader stores four 6 KiB screens. Every transferred screen is
-applied atomically only after its length and CRC-32 pass.
+rows at the bottom of the live reader view. Page Up lazily captures and splits
+bounded recent tmux scrollback using the reader's rows and columns. Android
+stores up to 64 of these text pages; the reader stores four 6 KiB pages.
+Alternate-screen programs are captured strictly from their current viewport and
+do not expose unrelated shell scrollback. Every transferred page is applied
+atomically only after its length and CRC-32 pass.
 
 Android automatically sends rows that were appended or cleanly scrolled. If an
 already published row changes in place, Android treats the screen as animated:
@@ -168,11 +172,11 @@ path has been tested on hardware.
 
 - X4 Pro only.
 - Plain text only; no colors, cursor, images, mouse, or full terminal emulation.
-- Reader history is four screens and exists only while Terminal is open; Android
-  retains up to 64 accepted screens.
+- Reader history is four scrollback pages and exists only while Terminal is
+  open; Android retains up to 64 pages from the latest lazy capture.
 - Animation-only redraws deliberately remain hidden until Confirm or subsequent
   upward progress.
-- The loader accepts a module when plugin ABI 1 matches and its integrity check
+- The loader accepts a module when plugin ABI 2 matches and its integrity check
   passes. An actually incompatible plugin can crash the activity and restart
   the reader. Removing its `.so` from the SD card disables it.
 - Current firmware UI emits only a literal command plus Enter, or Enter alone.

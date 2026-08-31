@@ -35,6 +35,7 @@ class BleTerminalTransport final {
   bool poll(IncomingPacket& packet);
   bool sendAction(Action action);
   bool sendCommand(const std::string& command);
+  bool sendCommand(const char* command, size_t length);
   bool sendFrameRequest(FrameRequest request, uint32_t anchorFrameId);
   bool sendFrameStatus(uint32_t frameId, FrameStatus status);
   bool sendViewport(uint16_t columns, uint16_t rows);

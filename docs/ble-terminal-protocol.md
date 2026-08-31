@@ -36,14 +36,20 @@ tmux source change bypass that interval.
 ## Reader cache and navigation
 
 The reader owns four fixed 6 KiB frame slots while Terminal is open. Android
-keeps up to 64 accepted frames. Side-key navigation uses an adjacent cached frame
-without BLE; if that frame is absent, the reader asks Android for the previous or
-next frame relative to the displayed frame ID.
+keeps up to 64 pages of the current tmux scrollback. These are text pages, not a
+timeline of previously published screen snapshots. Side-key navigation uses an
+adjacent page in the reader cache without BLE; if that page is absent, the reader
+asks Android for it relative to the displayed frame ID.
 
-New live frames are cached while the user reads an older frame, but they do not
-move or refresh the displayed page. Current returns to the newest snapshot.
-Holding Page Down also jumps to the newest cached frame and asks Android for its
-current snapshot.
+The page set is created lazily on the first Previous request. The helper captures
+bounded recent scrollback, wraps it to the reader's reported columns, and splits
+it into pages aligned from the newest row. Android sends only the requested page
+over BLE. Automatic live frames are paused while history is displayed. Current,
+or Next past the newest captured page, returns to the newest live snapshot and
+transfers only that page: it neither preloads nor forcibly erases the reader's
+other three slots. Each later automatic live frame replaces that same latest
+frame ID, so Page Up cannot accidentally navigate old animation or output
+snapshots.
 
 Leaving Terminal stops BLE and frees the activity and cache. Re-entering Terminal
 starts a new connection. Its first frame carries `RESET_CACHE`, so stale frame IDs
@@ -56,9 +62,8 @@ leaving the BLE connection intact.
 - Confirm: request and display Android's current snapshot.
 - Hold Confirm for about 700 ms: request the current snapshot and use a full
   ghost-cleaning e-ink refresh when it arrives.
-- Page Up / Page Down: previous or next frame.
-- Page Down while already on the newest frame: request Current as a manual
-  refresh.
+- Page Up / Page Down: previous or next tmux scrollback page.
+- Page Down past the newest history page: return to Current.
 - Hold Page Down for about 700 ms: return to the current live frame.
 - Keyboard icon: send one literal command followed by Enter. Empty input sends
   Enter only.
@@ -175,8 +180,11 @@ payload permitted by the negotiated MTU. The helper injects it with literal
 | 0 | 1 | Current (`0`), previous (`1`), or next (`2`) |
 | 1 | 4 | Anchor frame ID, or zero before the first frame |
 
-Current force-publishes the newest Android snapshot. Previous and next select a
-history neighbor. If no neighbor exists, Android may return the anchor again.
+Current force-publishes the newest Android snapshot and leaves history mode.
+The first Previous request lazily builds the bounded page set; later Previous
+and Next requests select its neighbors. At the oldest known page, Android leaves
+the displayed page in place without another transfer. Next past the newest page,
+or an unknown anchor, falls back to the newest live snapshot.
 
 ### `FRAME_STATUS` (`7`)
 
@@ -196,15 +204,16 @@ insert. Retry asks Android to resend the same complete frame from a new begin.
 | 2 | 2 | Nonzero terminal rows |
 
 The reader sends this after connecting and whenever its local font size changes.
-Android forwards it to `x4term`. Rows bound the normal-screen history fill;
-columns are currently informational and do not resize the user's tmux pane.
+Android forwards it to `x4term`. Rows and columns determine lazy scrollback page
+boundaries; they never resize the user's tmux pane.
 
 ## Text validation
 
 Display text permits valid Unicode UTF-8, newline, and horizontal tab. NUL,
 carriage return, ESC, DEL, other C0/C1 controls, overlong encodings, surrogates,
 and invalid Unicode are rejected. The helper normalizes line endings, removes
-forbidden controls and trailing screen padding, and limits a viewport to 6 KiB.
+forbidden controls and trailing screen padding, and limits every transferred
+page to 6 KiB.
 
 ## Connection lifecycle
 
@@ -218,7 +227,10 @@ forbidden controls and trailing screen padding, and limits a viewport to 6 KiB.
 7. Later safe forward snapshots are sent only while the reader is ready.
 8. An animation-only redraw stays on Android until Current is requested or a
    later capture demonstrates upward progress.
-9. On disconnect both peers discard connection-local sequences and write plans.
+9. On the first Previous request, the helper supplies a bounded page set and
+   Android transfers its penultimate page. Further cache misses transfer one
+   adjacent page at a time.
+10. On disconnect both peers discard connection-local sequences and write plans.
 
 Write-with-response supplies packet backpressure. Frame status supplies display
 backpressure. Neither peer replays a queue of intermediate snapshots after a

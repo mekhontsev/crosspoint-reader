@@ -104,8 +104,12 @@ class KeyboardEntryActivity : public Activity {
   bool hintVisible = false;
   unsigned long hintShowTime = 0;
 
-  void onComplete(std::string text);
-  void onCancel();
+ protected:
+  // Host-owned specializations can deliver results through a non-C++ ABI.
+  virtual void onComplete(std::string text);
+  virtual void onCancel();
+
+ private:
   bool cursorPositionFromPoint(int x, int y, size_t& position) const;
   std::string displayTextForCurrentState() const;
   // Advance of s[start, end) measured in place by temporarily null-terminating

@@ -14,8 +14,13 @@
 #include <cstdio>
 #include <cstring>
 #include <memory>
+#include <string>
+#include <utility>
 
+#include "Memory.h"
 #include "activities/Activity.h"
+#include "activities/util/KeyboardEntryActivity.h"
+#include "ble/BleTerminalTransport.h"
 #include "plugins/PluginAbi.h"
 #include "plugins/PluginHostSymbols.h"
 #include "private/elf_platform.h"
@@ -86,6 +91,47 @@ bool validModuleName(const char* name) {
 struct PsramDeleter {
   void operator()(uint8_t* pointer) const {
     if (pointer) heap_caps_free(pointer);
+  }
+};
+
+enum class PluginKeyboardResultState : uint8_t { NONE, OPEN, COMPLETED, CANCELLED };
+
+struct PluginKeyboardResult {
+  PluginKeyboardResultState state = PluginKeyboardResultState::NONE;
+  std::string text;
+};
+
+PluginKeyboardResult pluginKeyboardResult;
+
+class PluginTextKeyboardActivity final : public KeyboardEntryActivity {
+ public:
+  PluginTextKeyboardActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const char* title,
+                             const size_t maxLength, const bool showHeaderKeyboardToggle,
+                             const bool enableSystemLanguageSwitch)
+      : KeyboardEntryActivity(renderer, mappedInput, title, "", maxLength, InputType::Text, showHeaderKeyboardToggle,
+                              enableSystemLanguageSwitch) {}
+
+  void onExit() override {
+    if (pluginKeyboardResult.state == PluginKeyboardResultState::OPEN) {
+      pluginKeyboardResult.text.clear();
+      pluginKeyboardResult.state = PluginKeyboardResultState::CANCELLED;
+    }
+    KeyboardEntryActivity::onExit();
+  }
+
+  bool preventAutoSleep() override { return true; }
+
+ protected:
+  void onComplete(std::string text) override {
+    pluginKeyboardResult.text = std::move(text);
+    pluginKeyboardResult.state = PluginKeyboardResultState::COMPLETED;
+    finish();
+  }
+
+  void onCancel() override {
+    pluginKeyboardResult.text.clear();
+    pluginKeyboardResult.state = PluginKeyboardResultState::CANCELLED;
+    finish();
   }
 };
 
@@ -231,8 +277,7 @@ std::unique_ptr<Activity> PluginLoader::createManager(GfxRenderer& renderer, Map
   return create(manager_, crosspoint_plugin::MANAGER_PATH, renderer, mappedInput);
 }
 
-Activity* PluginLoader::createChild(const char* moduleName, GfxRenderer& renderer,
-                                    MappedInputManager& mappedInput) {
+Activity* PluginLoader::createChild(const char* moduleName, GfxRenderer& renderer, MappedInputManager& mappedInput) {
   if (!validModuleName(moduleName) || child_.rootActivity) return nullptr;
   std::array<char, 128> path{};
   const int length = std::snprintf(path.data(), path.size(), "%s/%s.so", crosspoint_plugin::ROOT_PATH, moduleName);
@@ -255,9 +300,58 @@ void PluginLoader::unloadManager() { unload(manager_); }
 void PluginLoader::unloadChild() { unload(child_); }
 
 extern "C" Activity* crosspoint_plugin_create_child(const char* moduleName, GfxRenderer* renderer,
-                                                     MappedInputManager* mappedInput) {
+                                                    MappedInputManager* mappedInput) {
   if (!renderer || !mappedInput) return nullptr;
   return PLUGIN_LOADER.createChild(moduleName, *renderer, *mappedInput);
+}
+
+extern "C" uint8_t crosspoint_plugin_open_text_keyboard_v2(const char* title, const size_t maxLength,
+                                                           const uint32_t flags, GfxRenderer* renderer,
+                                                           MappedInputManager* mappedInput) {
+  if (!renderer || !mappedInput || !title || maxLength == 0 ||
+      pluginKeyboardResult.state == PluginKeyboardResultState::OPEN) {
+    return false;
+  }
+  pluginKeyboardResult.text.clear();
+  pluginKeyboardResult.state = PluginKeyboardResultState::OPEN;
+  auto keyboard = makeUniqueNoThrow<PluginTextKeyboardActivity>(
+      *renderer, *mappedInput, title, maxLength, (flags & crosspoint_plugin::KEYBOARD_FLAG_HEADER_TOGGLE) != 0,
+      (flags & crosspoint_plugin::KEYBOARD_FLAG_SYSTEM_LANGUAGE) != 0);
+  if (!keyboard) {
+    pluginKeyboardResult.state = PluginKeyboardResultState::NONE;
+    return false;
+  }
+  activityManager.pushActivity(std::move(keyboard));
+  return true;
+}
+
+extern "C" uint8_t crosspoint_plugin_take_text_keyboard_result_v2(char* text, const size_t capacity, size_t* length,
+                                                                  uint8_t* cancelled) {
+  if (!length || !cancelled ||
+      (pluginKeyboardResult.state != PluginKeyboardResultState::COMPLETED &&
+       pluginKeyboardResult.state != PluginKeyboardResultState::CANCELLED)) {
+    return false;
+  }
+
+  const bool wasCancelled = pluginKeyboardResult.state == PluginKeyboardResultState::CANCELLED;
+  const size_t resultLength = wasCancelled ? 0 : pluginKeyboardResult.text.size();
+  if (!wasCancelled && (!text || capacity <= resultLength)) return false;
+
+  if (!wasCancelled) {
+    std::memcpy(text, pluginKeyboardResult.text.data(), resultLength);
+    text[resultLength] = '\0';
+  } else if (text && capacity != 0) {
+    text[0] = '\0';
+  }
+  *length = resultLength;
+  *cancelled = wasCancelled;
+  pluginKeyboardResult.text.clear();
+  pluginKeyboardResult.state = PluginKeyboardResultState::NONE;
+  return true;
+}
+
+extern "C" uint8_t crosspoint_plugin_send_terminal_command_v2(const char* text, const size_t length) {
+  return ble_terminal::sharedTransport().sendCommand(text, length);
 }
 
 #endif

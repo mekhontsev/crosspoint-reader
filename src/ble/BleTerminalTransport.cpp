@@ -249,10 +249,15 @@ bool BleTerminalTransport::sendAction(const Action action) {
 }
 
 bool BleTerminalTransport::sendCommand(const std::string& command) {
+  return sendCommand(command.data(), command.size());
+}
+
+bool BleTerminalTransport::sendCommand(const char* command, const size_t commandLength) {
+  if (!command && commandLength != 0) return false;
   std::array<uint8_t, MAX_PACKET_BYTES> packet{};
-  const size_t length = encodeCommandPacket(reinterpret_cast<const uint8_t*>(command.data()), command.size(),
-                                            outgoingSequence_, packet.data(), packet.size());
-  if (length == 0 || command.size() > maxCommandBytes()) return false;
+  const size_t length = encodeCommandPacket(reinterpret_cast<const uint8_t*>(command), commandLength, outgoingSequence_,
+                                            packet.data(), packet.size());
+  if (length == 0 || commandLength > maxCommandBytes()) return false;
   return sendPacket(packet.data(), length, "reader command");
 }
 

@@ -1,35 +1,45 @@
-# X4 Terminal v0.2.0 — tail replacement
+# X4 Terminal v0.2.0 — atomic screen frames
 
-Protocol-v2 release for **Xteink X4 Pro only**. It keeps locally cached pages
-when Codex or another terminal program redraws its current status area.
+Xteink X4 Pro-only terminal profile. It mirrors one plain-text `tmux` viewport
+without replaying the session or forwarding Codex animation frames.
 
-The firmware identifies itself as
-`1.5.0-x4pro-x4terminal-v0.2.0`.
+The firmware identifies itself as `1.5.0-x4pro-x4terminal-v0.2.0`.
 
-## Protocol change
+## Protocol
 
-- Add ordered `STREAM_TRUNCATE` packets that remove a validated UTF-8 byte count
-  from the transcript tail before replacement text is appended.
-- Preserve older pages instead of clearing the full 32 KiB reader cache during
-  a terminal redraw.
-- Use protocol version 2 and separate service/characteristic UUIDs, preventing a
-  v2 APK from silently connecting to incompatible v1 firmware.
-- Keep packet processing allocation-free; the existing activity-owned 32 KiB
-  buffer and memory budget are unchanged.
+- Replace the mutable transcript stream with protocol-v3 atomic frames:
+  `FRAME_BEGIN`, UTF-8 data chunks, and `FRAME_COMMIT`.
+- Validate the complete frame length and CRC-32 before changing the reader cache.
+- Use a separate v3 GATT UUID set so incompatible v2 clients do not connect.
+- Let the reader request Current, Previous, or Next and report Ready only after
+  the requested e-ink update completes.
+- Keep only one pending Android frame; reconnect transfers one current screen.
 
-## Verification completed
+## Animation and navigation
 
-- Firmware protocol host tests cover tail replacement, UTF-8 boundaries,
-  invalid ranges, sequence gaps, and duplicate truncates.
-- Android protocol tests cover byte vectors, separate source/reader shadows,
-  short reconnect replay, and preservation of older local history.
-- The full `x4pro-ble-terminal` ESP32-S3 firmware build succeeds with 28.7%
-  static RAM and 88.6% of the application flash partition used.
-- The Windows smoke client uses the protocol-v2 UUIDs and exercises reset,
-  multi-page append, tail truncate, and replacement append; its packet
-  self-test passes.
+- Android automatically publishes append/scroll progress but freezes when an
+  already displayed row is replaced.
+- Confirm force-publishes the newest Android snapshot. Holding Confirm also uses
+  a full ghost-cleaning panel refresh.
+- Four fixed reader slots provide immediate nearby navigation; Android retains
+  up to 64 accepted screens for cache misses.
+- New output does not move or refresh the page while older history is displayed.
 
-## Hardware verification
+## Memory
 
-Installed on a physical Xteink X4 Pro on 2026-08-29. The reader booted the
-`1.5.0-x4pro-x4terminal-v0.2.0` image and remained operational.
+Four committed 6 KiB slots plus one staging slot use about 30 KiB of fixed
+activity-owned memory, slightly less than the former 32 KiB transcript buffer.
+Packet processing remains allocation-free.
+
+## Verification
+
+- JVM tests cover frame encoding, CRC metadata, request/status parsing,
+  animation suppression, scroll recovery, latest-wins history, and UTF-8 chunks.
+- Termux tests cover viewport-only capture, normalization, authenticated IPC,
+  command deduplication, and literal command submission.
+- Firmware host tests cover atomic commit, CRC and length rejection, sequence
+  recovery, duplicate packets, UTF-8, and reader control encoding.
+- The exact `x4pro-ble-terminal` firmware profile and Android APK must build
+  successfully before publishing artifacts.
+- A physical X4 Pro hardware pass covered boot, BLE reconnect, English and
+  Russian frames, automatic scrolling, manual refresh, and history paging.

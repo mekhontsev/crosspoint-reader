@@ -10,15 +10,14 @@ CrossPoint project or Xteink.
 Do not install this build on an original Xteink X4, X3, Paper Mono, or another
 ESP32 board. A binary for the wrong board can make the device unbootable.
 
-The firmware has been built and exercised on one X4 Pro with CrossPoint already
-installed. The tested path covers boot, Terminal entry, authenticated pairing,
-English and Russian text, multiple pages of packetized data, local paging,
-font controls, reader-to-client command entry, disconnect, and return to the
-home menu without a crash.
+The atomic frame build was exercised on one X4 Pro with CrossPoint already
+installed. Hardware checks covered boot, pairing and reconnect, English and
+Russian frames, automatic scrolling, manual refresh, history paging, and return
+to the home menu.
 
-The Android APK and Termux helper are not released yet. Until they exist, the
-included Windows Python client is only a development smoke test; it does not
-mirror a real Termux session or execute commands received from the reader.
+The companion Android APK and `x4term` Termux helper live in the separate
+[`x4-terminal-bridge`](https://github.com/mekhontsev/x4-terminal-bridge)
+repository. Firmware and APK protocol versions must match.
 
 ## Safety prerequisites
 
@@ -63,34 +62,17 @@ size, and SHA-256 trailer before changing the active OTA image.
 
 ## Connecting
 
-### Current Windows smoke test
+Install and configure the APK and helper as described in the bridge repository.
+Run the shell, SSH client, or Codex session in a named `tmux` pane, then start:
 
-Install Python and Bleak, then run from a checkout of this branch:
-
-```powershell
-py -3.10 -m pip install "bleak>=1,<4"
-py -3.10 scripts/ble_terminal_client.py --self-test
-py -3.10 scripts/ble_terminal_client.py
+```sh
+x4term serve --target work:0.0
 ```
 
-Open **Terminal** on the reader before starting the final command. The reader
-shows `Waiting...` while advertising. On the first connection it displays a
-random six-digit passkey; enter that code in the Windows pairing prompt. A valid
-bond is reused on later connections.
-
-The smoke client sends fixed demonstration text and prints reader commands. For
-safety, it never executes those commands on the computer.
-
-### Future Android connection
-
-The companion APK will connect automatically while its foreground service is
-enabled. A Termux helper will capture and normalize a selected `tmux` pane. When
-the reader leaves Terminal, BLE stops; when Terminal is opened again, Android
-reconnects and replays the newest snapshot without requiring a new passkey while
-the bond remains valid.
-
-The Android implementation contract is documented separately in
-[`x4-terminal-android-handoff.md`](x4-terminal-android-handoff.md).
+Enable the APK service and open **Terminal** on the reader. On the first
+connection the reader displays a random six-digit passkey; enter it in Android's
+system pairing dialog. The bond is reused later. Re-entering Terminal makes
+Android reconnect and send one current screen rather than replaying the session.
 
 ## Reader controls
 
@@ -99,25 +81,30 @@ The Android implementation contract is documented separately in
 - `-` and `+`: choose one of nine local IBM Plex Mono sizes, 8 through 24.
 - `EN` / system-language key inside the Terminal keyboard: switch between
   English and the supported layout matching the reader language.
-- Page Up: move one local screen toward older text.
-- Page Down: move one local screen toward newer text.
-- Hold Page Down for about 700 ms: jump directly to the live tail.
+- Confirm: request Android's exact current screen. Use this after Codex or
+  another full-screen program has redrawn existing rows.
+- Hold Confirm for about 700 ms: request the current screen and use a full
+  ghost-cleaning e-ink refresh.
+- Page Up: show the previous cached screen or request it from Android.
+- Page Down: show the next cached screen or request it from Android.
+- Hold Page Down for about 700 ms: jump to the newest screen.
 - Back: leave Terminal and stop its BLE stack.
 
-Paging and font changes are local. They do not contact or wake the phone.
+Cached paging and font changes are local. Paging contacts Android only when the
+adjacent screen is not in the four-frame reader cache.
 
 ## Data, refresh, and power behavior
 
-The reader keeps the newest 32,768 bytes of valid UTF-8 while Terminal is open.
-When the cache fills, it drops old complete lines first. If the entire cache is
-one long line, it drops only the required prefix at a UTF-8 boundary. The full
-terminal scrollback remains owned by `tmux`, not the reader.
+The helper captures only the visible `tmux` viewport. Android stores up to 64
+accepted text screens; the reader stores four 6 KiB screens. Every transferred
+screen is applied atomically only after its length and CRC-32 pass.
 
-BLE packets are accepted as quickly as acknowledged writes allow. E-ink drawing
-is independent: during a continuous stream it refreshes no more than once every
-three seconds, and after a short burst it coalesces the final state. With no new
-data there are no display refreshes. A quiet connection returns to slower BLE
-connection parameters.
+Android automatically sends rows that were appended or cleanly scrolled. If an
+already published row changes in place, Android treats the screen as animated:
+it keeps the newest snapshot but sends nothing until Confirm is pressed or a
+later capture demonstrates real upward progress. There is no periodic
+three-second animation replay. While the panel is busy Android keeps only the
+newest pending screen.
 
 Leaving Terminal clears the reader's local cache and stops BLE. Re-entering the
 screen causes the companion to reconnect and replay its latest snapshot.
@@ -129,7 +116,7 @@ screen causes the companion to reconnect and replay its latest snapshot.
 - Terminal text is data only. The reader never executes it.
 - Only an explicitly entered command line or allow-listed action can travel
   from reader to companion.
-- The future Termux helper must pass command text to `tmux` as a literal argv
+- The Termux helper passes command text to `tmux` as a literal argv
   value, never through shell interpolation.
 
 BLE encryption protects the radio link after pairing. It does not protect a
@@ -157,12 +144,11 @@ path has been tested on hardware.
 ## Known limitations
 
 - X4 Pro only.
-- Experimental firmware tested on one physical reader.
-- Android companion not released yet.
 - Plain text only; no colors, cursor, images, mouse, or full terminal emulation.
-- Local reader history is limited to 32 KiB and exists only while Terminal is
-  open.
-- Side-key paging is local; reserved BLE page action IDs are not emitted.
+- Reader history is four screens and exists only while Terminal is open; Android
+  retains up to 64 accepted screens.
+- Animation-only redraws deliberately remain hidden until Confirm or subsequent
+  upward progress.
 - Current firmware UI emits only a literal command plus Enter, or Enter alone.
 - OTA checks intentionally point to upstream CrossPoint rather than this fork.
 

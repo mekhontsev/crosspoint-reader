@@ -1,6 +1,5 @@
 #include "BleTerminalProtocol.h"
 
-#include <algorithm>
 #include <cstring>
 
 namespace ble_terminal {
@@ -8,7 +7,12 @@ namespace {
 
 constexpr uint8_t MAGIC_0 = 'X';
 constexpr uint8_t MAGIC_1 = 'T';
-constexpr uint8_t PROTOCOL_VERSION = 2;
+constexpr uint8_t PROTOCOL_VERSION = 3;
+constexpr size_t FRAME_BEGIN_PAYLOAD_BYTES = 11;
+constexpr size_t FRAME_ID_PAYLOAD_BYTES = sizeof(uint32_t);
+constexpr size_t FRAME_CONTROL_PAYLOAD_BYTES = sizeof(uint32_t) + sizeof(uint8_t);
+
+static_assert(MAX_FRAME_BYTES <= UINT16_MAX);
 
 uint16_t readLe16(const uint8_t* data) {
   return static_cast<uint16_t>(data[0]) | (static_cast<uint16_t>(data[1]) << 8U);
@@ -37,22 +41,50 @@ bool isAllowedAction(const Action action) {
     case Action::APPROVE_REQUEST:
     case Action::REJECT_REQUEST:
     case Action::SUBMIT_INPUT:
-    case Action::PAGE_UP:
-    case Action::PAGE_DOWN:
       return true;
     default:
       return false;
   }
 }
 
+bool isAllowedFrameRequest(const FrameRequest request) {
+  return request == FrameRequest::CURRENT || request == FrameRequest::PREVIOUS || request == FrameRequest::NEXT;
+}
+
+bool isAllowedFrameStatus(const FrameStatus status) {
+  return status == FrameStatus::READY || status == FrameStatus::RETRY;
+}
+
 bool allowedCodepoint(const uint32_t cp) {
   if (cp == '\n' || cp == '\t') return true;
-  // Reject terminal control characters, including ESC and the C1 range. The
-  // Android bridge must strip ANSI before constructing APPEND packets.
   return cp >= 0x20 && cp != 0x7F && !(cp >= 0x80 && cp <= 0x9F);
 }
 
-bool isUtf8Continuation(const char value) { return (static_cast<uint8_t>(value) & 0xC0U) == 0x80U; }
+uint32_t crc32(const uint8_t* data, const size_t length) {
+  uint32_t crc = 0xFFFFFFFFU;
+  for (size_t index = 0; index < length; ++index) {
+    crc ^= data[index];
+    for (uint8_t bit = 0; bit < 8; ++bit) {
+      crc = (crc >> 1U) ^ (0xEDB88320U & (0U - (crc & 1U)));
+    }
+  }
+  return crc ^ 0xFFFFFFFFU;
+}
+
+size_t encodePacket(const PacketType type, const uint8_t* payload, const size_t payloadLength, const uint32_t sequence,
+                    uint8_t* output, const size_t capacity) {
+  const size_t packetLength = PACKET_HEADER_BYTES + payloadLength;
+  if (!output || capacity < packetLength || packetLength > MAX_PACKET_BYTES) return 0;
+
+  output[0] = MAGIC_0;
+  output[1] = MAGIC_1;
+  output[2] = PROTOCOL_VERSION;
+  output[3] = static_cast<uint8_t>(type);
+  writeLe32(output + 4, sequence);
+  writeLe16(output + 8, static_cast<uint16_t>(payloadLength));
+  if (payloadLength > 0) std::memcpy(output + PACKET_HEADER_BYTES, payload, payloadLength);
+  return packetLength;
+}
 
 }  // namespace
 
@@ -69,7 +101,6 @@ bool isValidDisplayText(const uint8_t* data, const size_t length) {
     if (lead < 0x80) {
       cp = lead;
       bytes = 1;
-      minimum = 0;
     } else if ((lead & 0xE0U) == 0xC0U) {
       cp = lead & 0x1FU;
       bytes = 2;
@@ -103,40 +134,16 @@ bool isValidDisplayText(const uint8_t* data, const size_t length) {
 
 bool isValidCommandText(const uint8_t* data, const size_t length) {
   if (!data || length == 0 || length > MAX_COMMAND_BYTES || !isValidDisplayText(data, length)) return false;
-
-  // A COMMAND represents one line. The bridge adds the terminal Enter key;
-  // embedded line breaks and tabs would make that contract ambiguous.
   for (size_t i = 0; i < length; ++i) {
     if (data[i] == '\n' || data[i] == '\t') return false;
   }
   return true;
 }
 
-namespace {
-
-size_t encodePacket(const PacketType type, const uint8_t* payload, const size_t payloadLength, const uint32_t sequence,
-                    uint8_t* output, const size_t capacity) {
-  const size_t packetLength = PACKET_HEADER_BYTES + payloadLength;
-  if (!output || capacity < packetLength || packetLength > MAX_PACKET_BYTES) return 0;
-
-  output[0] = MAGIC_0;
-  output[1] = MAGIC_1;
-  output[2] = PROTOCOL_VERSION;
-  output[3] = static_cast<uint8_t>(type);
-  writeLe32(output + 4, sequence);
-  writeLe16(output + 8, static_cast<uint16_t>(payloadLength));
-  if (payloadLength > 0) std::memcpy(output + PACKET_HEADER_BYTES, payload, payloadLength);
-  return packetLength;
-}
-
-}  // namespace
-
 size_t encodeActionPacket(const Action action, const uint32_t sequence, uint8_t* output, const size_t capacity) {
-  constexpr size_t ACTION_PACKET_BYTES = PACKET_HEADER_BYTES + 1;
-  if (!output || capacity < ACTION_PACKET_BYTES || !isAllowedAction(action)) return 0;
-
+  if (!isAllowedAction(action)) return 0;
   const uint8_t payload = static_cast<uint8_t>(action);
-  return encodePacket(PacketType::ACTION, &payload, 1, sequence, output, capacity);
+  return encodePacket(PacketType::ACTION, &payload, sizeof(payload), sequence, output, capacity);
 }
 
 size_t encodeCommandPacket(const uint8_t* command, const size_t commandLength, const uint32_t sequence, uint8_t* output,
@@ -145,23 +152,44 @@ size_t encodeCommandPacket(const uint8_t* command, const size_t commandLength, c
   return encodePacket(PacketType::COMMAND, command, commandLength, sequence, output, capacity);
 }
 
-TextStreamReceiver::TextStreamReceiver(char* buffer, const size_t capacity)
-    : buffer_(buffer),
-      capacity_(capacity),
-      maxTextBytes_(capacity > 0 ? std::min(capacity - 1, MAX_TRANSCRIPT_BYTES) : 0) {
+size_t encodeFrameRequestPacket(const FrameRequest request, const uint32_t anchorFrameId, const uint32_t sequence,
+                                uint8_t* output, const size_t capacity) {
+  if (!isAllowedFrameRequest(request)) return 0;
+  uint8_t payload[FRAME_CONTROL_PAYLOAD_BYTES]{};
+  payload[0] = static_cast<uint8_t>(request);
+  writeLe32(payload + 1, anchorFrameId);
+  return encodePacket(PacketType::FRAME_REQUEST, payload, sizeof(payload), sequence, output, capacity);
+}
+
+size_t encodeFrameStatusPacket(const uint32_t frameId, const FrameStatus status, const uint32_t sequence,
+                               uint8_t* output, const size_t capacity) {
+  if (frameId == 0 || !isAllowedFrameStatus(status)) return 0;
+  uint8_t payload[FRAME_CONTROL_PAYLOAD_BYTES]{};
+  writeLe32(payload, frameId);
+  payload[4] = static_cast<uint8_t>(status);
+  return encodePacket(PacketType::FRAME_STATUS, payload, sizeof(payload), sequence, output, capacity);
+}
+
+TextFrameReceiver::TextFrameReceiver(char* buffer, const size_t capacity) : buffer_(buffer), capacity_(capacity) {
   if (buffer_ && capacity_ > 0) buffer_[0] = '\0';
 }
 
-void TextStreamReceiver::clear() {
+void TextFrameReceiver::clear() {
   currentLength_ = 0;
-  lastDiscardedBytes_ = 0;
+  expectedLength_ = 0;
+  expectedCrc_ = 0;
+  frameId_ = 0;
+  frameFlags_ = 0;
+  beginSequence_ = 0;
   expectedSequence_ = 0;
-  synchronized_ = false;
+  committedSequence_ = 0;
+  committedFrameId_ = 0;
+  receiving_ = false;
+  hasCommittedFrame_ = false;
   if (buffer_ && capacity_ > 0) buffer_[0] = '\0';
 }
 
-AcceptResult TextStreamReceiver::accept(const uint8_t* packet, const size_t length) {
-  lastDiscardedBytes_ = 0;
+AcceptResult TextFrameReceiver::accept(const uint8_t* packet, const size_t length) {
   if (!packet || !buffer_ || capacity_ == 0 || length < PACKET_HEADER_BYTES || length > MAX_PACKET_BYTES) {
     return AcceptResult::INVALID_PACKET;
   }
@@ -172,105 +200,111 @@ AcceptResult TextStreamReceiver::accept(const uint8_t* packet, const size_t leng
   const uint32_t sequence = readLe32(packet + 4);
   const size_t payloadLength = readLe16(packet + 8);
   if (payloadLength != length - PACKET_HEADER_BYTES) return AcceptResult::INVALID_PACKET;
+  const uint8_t* payload = packet + PACKET_HEADER_BYTES;
 
   switch (type) {
-    case PacketType::STREAM_RESET:
-      return acceptReset(sequence, payloadLength);
-    case PacketType::STREAM_APPEND:
-      return acceptAppend(sequence, packet + PACKET_HEADER_BYTES, payloadLength);
-    case PacketType::STREAM_TRUNCATE:
-      return acceptTruncate(sequence, packet + PACKET_HEADER_BYTES, payloadLength);
+    case PacketType::FRAME_BEGIN:
+      return acceptBegin(sequence, payload, payloadLength);
+    case PacketType::FRAME_DATA:
+      return acceptData(sequence, payload, payloadLength);
+    case PacketType::FRAME_COMMIT:
+      return acceptCommit(sequence, payload, payloadLength);
     case PacketType::ACTION:
     case PacketType::COMMAND:
+    case PacketType::FRAME_REQUEST:
+    case PacketType::FRAME_STATUS:
     default:
       return AcceptResult::UNEXPECTED_TYPE;
   }
 }
 
-AcceptResult TextStreamReceiver::acceptReset(const uint32_t sequence, const size_t payloadLength) {
-  if (payloadLength != 0) return AcceptResult::INVALID_PACKET;
+AcceptResult TextFrameReceiver::acceptBegin(const uint32_t sequence, const uint8_t* payload,
+                                            const size_t payloadLength) {
+  if (!payload || payloadLength != FRAME_BEGIN_PAYLOAD_BYTES) return AcceptResult::INVALID_PACKET;
+
+  const uint32_t frameId = readLe32(payload);
+  const size_t frameLength = readLe16(payload + 4);
+  const uint32_t frameCrc = readLe32(payload + 6);
+  const uint8_t flags = payload[10];
+  if (frameId == 0 || frameLength > MAX_FRAME_BYTES || frameLength + 1 > capacity_ ||
+      (flags & ~FRAME_FLAGS_MASK) != 0) {
+    receiving_ = false;
+    return frameLength > MAX_FRAME_BYTES || frameLength + 1 > capacity_ ? AcceptResult::TOO_LARGE
+                                                                        : AcceptResult::INVALID_FRAME;
+  }
+
+  if (receiving_ && sequence == beginSequence_ && frameId == frameId_ && frameLength == expectedLength_ &&
+      frameCrc == expectedCrc_ && flags == frameFlags_) {
+    return AcceptResult::DUPLICATE_IGNORED;
+  }
 
   currentLength_ = 0;
-  buffer_[0] = '\0';
+  expectedLength_ = frameLength;
+  expectedCrc_ = frameCrc;
+  frameId_ = frameId;
+  frameFlags_ = flags;
+  beginSequence_ = sequence;
   expectedSequence_ = sequence + 1U;
-  synchronized_ = true;
-  return AcceptResult::STREAM_RESET;
+  receiving_ = true;
+  buffer_[0] = '\0';
+  return AcceptResult::FRAME_STARTED;
 }
 
-AcceptResult TextStreamReceiver::acceptAppend(const uint32_t sequence, const uint8_t* payload,
-                                              const size_t payloadLength) {
-  if (!synchronized_) return AcceptResult::NEEDS_RESET;
+AcceptResult TextFrameReceiver::acceptData(const uint32_t sequence, const uint8_t* payload,
+                                           const size_t payloadLength) {
+  if (!receiving_) return AcceptResult::NEEDS_BEGIN;
   if (sequence == expectedSequence_ - 1U) return AcceptResult::DUPLICATE_IGNORED;
   if (sequence != expectedSequence_) {
-    synchronized_ = false;
+    receiving_ = false;
     return AcceptResult::OUT_OF_ORDER;
   }
-  if (payloadLength == 0) return AcceptResult::INVALID_PACKET;
-  if (payloadLength > maxTextBytes_) {
-    synchronized_ = false;
+  if (!payload || payloadLength == 0) return AcceptResult::INVALID_PACKET;
+  if (currentLength_ + payloadLength > expectedLength_) {
+    receiving_ = false;
     return AcceptResult::TOO_LARGE;
   }
   if (!isValidDisplayText(payload, payloadLength)) {
-    synchronized_ = false;
+    receiving_ = false;
     return AcceptResult::INVALID_TEXT;
   }
-
-  const size_t combinedLength = currentLength_ + payloadLength;
-  if (combinedLength > maxTextBytes_) discardOldest(combinedLength - maxTextBytes_);
 
   std::memcpy(buffer_ + currentLength_, payload, payloadLength);
   currentLength_ += payloadLength;
   buffer_[currentLength_] = '\0';
   expectedSequence_++;
-  return AcceptResult::TEXT_APPENDED;
+  return AcceptResult::FRAME_DATA_ACCEPTED;
 }
 
-AcceptResult TextStreamReceiver::acceptTruncate(const uint32_t sequence, const uint8_t* payload,
-                                                const size_t payloadLength) {
-  if (!synchronized_) return AcceptResult::NEEDS_RESET;
+AcceptResult TextFrameReceiver::acceptCommit(const uint32_t sequence, const uint8_t* payload,
+                                             const size_t payloadLength) {
+  if (!payload || payloadLength != FRAME_ID_PAYLOAD_BYTES) return AcceptResult::INVALID_PACKET;
+  const uint32_t commitFrameId = readLe32(payload);
+  if (!receiving_) {
+    if (hasCommittedFrame_ && sequence == committedSequence_ && commitFrameId == committedFrameId_) {
+      return AcceptResult::DUPLICATE_IGNORED;
+    }
+    return AcceptResult::NEEDS_BEGIN;
+  }
   if (sequence == expectedSequence_ - 1U) return AcceptResult::DUPLICATE_IGNORED;
   if (sequence != expectedSequence_) {
-    synchronized_ = false;
+    receiving_ = false;
     return AcceptResult::OUT_OF_ORDER;
   }
-  if (!payload || payloadLength != sizeof(uint16_t)) return AcceptResult::INVALID_PACKET;
-
-  const size_t bytesToRemove = readLe16(payload);
-  if (bytesToRemove == 0 || bytesToRemove > currentLength_) {
-    synchronized_ = false;
-    return AcceptResult::INVALID_TRUNCATE;
+  if (commitFrameId != frameId_ || currentLength_ != expectedLength_) {
+    receiving_ = false;
+    return AcceptResult::INVALID_FRAME;
+  }
+  if (crc32(reinterpret_cast<const uint8_t*>(buffer_), currentLength_) != expectedCrc_) {
+    receiving_ = false;
+    return AcceptResult::CRC_MISMATCH;
   }
 
-  const size_t newLength = currentLength_ - bytesToRemove;
-  if (newLength > 0 && isUtf8Continuation(buffer_[newLength])) {
-    synchronized_ = false;
-    return AcceptResult::INVALID_TRUNCATE;
-  }
-
-  currentLength_ = newLength;
-  buffer_[currentLength_] = '\0';
+  receiving_ = false;
+  committedSequence_ = sequence;
+  committedFrameId_ = frameId_;
+  hasCommittedFrame_ = true;
   expectedSequence_++;
-  return AcceptResult::TEXT_TRUNCATED;
-}
-
-void TextStreamReceiver::discardOldest(const size_t bytesNeeded) {
-  size_t discard = bytesNeeded;
-
-  // Prefer dropping whole lines. If the current buffer has no later newline,
-  // round forward to a UTF-8 code-point boundary instead.
-  while (discard < currentLength_ && buffer_[discard - 1] != '\n') ++discard;
-  if (discard < currentLength_ && buffer_[discard - 1] == '\n') {
-    // The required prefix already ended exactly after a newline.
-  } else if (discard < currentLength_ && buffer_[discard] == '\n') {
-    ++discard;
-  } else {
-    discard = bytesNeeded;
-    while (discard < currentLength_ && isUtf8Continuation(buffer_[discard])) ++discard;
-  }
-
-  std::memmove(buffer_, buffer_ + discard, currentLength_ - discard);
-  currentLength_ -= discard;
-  lastDiscardedBytes_ = discard;
+  return AcceptResult::FRAME_COMMITTED;
 }
 
 }  // namespace ble_terminal

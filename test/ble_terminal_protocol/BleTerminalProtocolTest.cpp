@@ -25,8 +25,17 @@ void appendLe32(std::vector<uint8_t>& out, const uint32_t value) {
   out.push_back(static_cast<uint8_t>(value >> 24U));
 }
 
+uint32_t crc32(const std::string_view text) {
+  uint32_t crc = 0xFFFFFFFFU;
+  for (const unsigned char value : text) {
+    crc ^= value;
+    for (uint8_t bit = 0; bit < 8; ++bit) crc = (crc >> 1U) ^ (0xEDB88320U & (0U - (crc & 1U)));
+  }
+  return crc ^ 0xFFFFFFFFU;
+}
+
 std::vector<uint8_t> packet(const PacketType type, const uint32_t sequence, const std::string_view payload = {}) {
-  std::vector<uint8_t> out{'X', 'T', 2, static_cast<uint8_t>(type)};
+  std::vector<uint8_t> out{'X', 'T', 3, static_cast<uint8_t>(type)};
   appendLe32(out, sequence);
   appendLe16(out, static_cast<uint16_t>(payload.size()));
   out.insert(out.end(), payload.begin(), payload.end());
@@ -36,256 +45,147 @@ std::vector<uint8_t> packet(const PacketType type, const uint32_t sequence, cons
 template <size_t Capacity = 128>
 struct ReceiverFixture {
   std::array<char, Capacity> storage{};
-  ble_terminal::TextStreamReceiver receiver{storage.data(), Capacity};
+  ble_terminal::TextFrameReceiver receiver{storage.data(), Capacity};
 
   AcceptResult accept(const std::vector<uint8_t>& value) { return receiver.accept(value.data(), value.size()); }
-  AcceptResult reset(const uint32_t sequence) { return accept(packet(PacketType::STREAM_RESET, sequence)); }
-  AcceptResult append(const uint32_t sequence, const std::string_view text) {
-    return accept(packet(PacketType::STREAM_APPEND, sequence, text));
-  }
-  AcceptResult truncate(const uint32_t sequence, const uint16_t bytesToRemove) {
+
+  AcceptResult begin(const uint32_t sequence, const uint32_t frameId, const std::string_view completeText,
+                     const uint8_t flags = 0, const uint32_t overrideCrc = 0) {
     std::string payload;
-    payload.push_back(static_cast<char>(bytesToRemove));
-    payload.push_back(static_cast<char>(bytesToRemove >> 8U));
-    return accept(packet(PacketType::STREAM_TRUNCATE, sequence, payload));
+    const auto append32 = [&](const uint32_t value) {
+      payload.push_back(static_cast<char>(value));
+      payload.push_back(static_cast<char>(value >> 8U));
+      payload.push_back(static_cast<char>(value >> 16U));
+      payload.push_back(static_cast<char>(value >> 24U));
+    };
+    append32(frameId);
+    payload.push_back(static_cast<char>(completeText.size()));
+    payload.push_back(static_cast<char>(completeText.size() >> 8U));
+    append32(overrideCrc == 0 ? crc32(completeText) : overrideCrc);
+    payload.push_back(static_cast<char>(flags));
+    return accept(packet(PacketType::FRAME_BEGIN, sequence, payload));
+  }
+
+  AcceptResult data(const uint32_t sequence, const std::string_view text) {
+    return accept(packet(PacketType::FRAME_DATA, sequence, text));
+  }
+
+  AcceptResult commit(const uint32_t sequence, const uint32_t frameId) {
+    std::string payload;
+    payload.push_back(static_cast<char>(frameId));
+    payload.push_back(static_cast<char>(frameId >> 8U));
+    payload.push_back(static_cast<char>(frameId >> 16U));
+    payload.push_back(static_cast<char>(frameId >> 24U));
+    return accept(packet(PacketType::FRAME_COMMIT, sequence, payload));
   }
 };
 
-TEST(BleTerminalProtocol, AppendsNewTextAsPacketsArrive) {
+TEST(BleTerminalProtocol, CommitsOnlyACompleteCrcCheckedFrame) {
   ReceiverFixture fixture;
+  const std::string frame = "user\nПривет";
 
-  EXPECT_EQ(fixture.reset(40), AcceptResult::STREAM_RESET);
-  EXPECT_EQ(fixture.append(41, "user\n"), AcceptResult::TEXT_APPENDED);
-  EXPECT_EQ(std::string_view(fixture.receiver.currentText()), "user\n");
-  EXPECT_EQ(fixture.append(42, "hello terminal\n"), AcceptResult::TEXT_APPENDED);
-  EXPECT_EQ(std::string_view(fixture.receiver.currentText()), "user\nhello terminal\n");
-  EXPECT_EQ(fixture.receiver.expectedSequence(), 43U);
+  EXPECT_EQ(fixture.begin(40, 7, frame, ble_terminal::FRAME_FLAG_LATEST), AcceptResult::FRAME_STARTED);
+  EXPECT_EQ(fixture.data(41, "user\n"), AcceptResult::FRAME_DATA_ACCEPTED);
+  EXPECT_TRUE(fixture.receiver.receiving());
+  EXPECT_EQ(fixture.data(42, "Привет"), AcceptResult::FRAME_DATA_ACCEPTED);
+  EXPECT_EQ(fixture.commit(43, 7), AcceptResult::FRAME_COMMITTED);
+  EXPECT_FALSE(fixture.receiver.receiving());
+  EXPECT_EQ(fixture.receiver.frameId(), 7U);
+  EXPECT_EQ(fixture.receiver.frameFlags(), ble_terminal::FRAME_FLAG_LATEST);
+  EXPECT_EQ(std::string_view(fixture.receiver.frameText()), frame);
 }
 
-TEST(BleTerminalProtocol, AcceptsUtf8WhenEachPacketEndsOnACodepointBoundary) {
+TEST(BleTerminalProtocol, RejectsMissingDataAndCrcMismatch) {
   ReceiverFixture fixture;
+  ASSERT_EQ(fixture.begin(1, 9, "complete"), AcceptResult::FRAME_STARTED);
+  ASSERT_EQ(fixture.data(2, "short"), AcceptResult::FRAME_DATA_ACCEPTED);
+  EXPECT_EQ(fixture.commit(3, 9), AcceptResult::INVALID_FRAME);
 
-  ASSERT_EQ(fixture.reset(1), AcceptResult::STREAM_RESET);
-  EXPECT_EQ(fixture.append(2, "Привет, "), AcceptResult::TEXT_APPENDED);
-  EXPECT_EQ(fixture.append(3, "terminal"), AcceptResult::TEXT_APPENDED);
-  EXPECT_EQ(std::string_view(fixture.receiver.currentText()), "Привет, terminal");
+  ASSERT_EQ(fixture.begin(10, 10, "complete", 0, 1), AcceptResult::FRAME_STARTED);
+  ASSERT_EQ(fixture.data(11, "complete"), AcceptResult::FRAME_DATA_ACCEPTED);
+  EXPECT_EQ(fixture.commit(12, 10), AcceptResult::CRC_MISMATCH);
 }
 
-TEST(BleTerminalProtocol, RequiresResetBeforeFirstAppend) {
+TEST(BleTerminalProtocol, NewBeginResynchronizesAfterAnOrderingGap) {
   ReceiverFixture fixture;
-  EXPECT_EQ(fixture.append(1, "text"), AcceptResult::NEEDS_RESET);
-  EXPECT_STREQ(fixture.receiver.currentText(), "");
+  ASSERT_EQ(fixture.begin(10, 1, "old"), AcceptResult::FRAME_STARTED);
+  EXPECT_EQ(fixture.data(12, "old"), AcceptResult::OUT_OF_ORDER);
+  EXPECT_FALSE(fixture.receiver.receiving());
+  EXPECT_EQ(fixture.data(13, "blocked"), AcceptResult::NEEDS_BEGIN);
+
+  ASSERT_EQ(fixture.begin(500, 2, "new"), AcceptResult::FRAME_STARTED);
+  ASSERT_EQ(fixture.data(501, "new"), AcceptResult::FRAME_DATA_ACCEPTED);
+  EXPECT_EQ(fixture.commit(502, 2), AcceptResult::FRAME_COMMITTED);
+  EXPECT_STREQ(fixture.receiver.frameText(), "new");
 }
 
-TEST(BleTerminalProtocol, GapPreservesTextAndRequiresReset) {
+TEST(BleTerminalProtocol, DuplicateDataAndCommitAreIgnored) {
   ReceiverFixture fixture;
-  ASSERT_EQ(fixture.reset(10), AcceptResult::STREAM_RESET);
-  ASSERT_EQ(fixture.append(11, "known good"), AcceptResult::TEXT_APPENDED);
-
-  EXPECT_EQ(fixture.append(13, "missed packet 12"), AcceptResult::OUT_OF_ORDER);
-  EXPECT_FALSE(fixture.receiver.synchronized());
-  EXPECT_EQ(std::string_view(fixture.receiver.currentText()), "known good");
-  EXPECT_EQ(fixture.append(14, "still blocked"), AcceptResult::NEEDS_RESET);
+  ASSERT_EQ(fixture.begin(7, 5, "once"), AcceptResult::FRAME_STARTED);
+  ASSERT_EQ(fixture.data(8, "once"), AcceptResult::FRAME_DATA_ACCEPTED);
+  EXPECT_EQ(fixture.data(8, "once"), AcceptResult::DUPLICATE_IGNORED);
+  ASSERT_EQ(fixture.commit(9, 5), AcceptResult::FRAME_COMMITTED);
+  EXPECT_EQ(fixture.commit(9, 5), AcceptResult::DUPLICATE_IGNORED);
 }
 
-TEST(BleTerminalProtocol, ResetWithAnySequenceResynchronizesAndClearsText) {
+TEST(BleTerminalProtocol, CommitsAnEmptyFrameWithoutDataPackets) {
   ReceiverFixture fixture;
-  ASSERT_EQ(fixture.reset(10), AcceptResult::STREAM_RESET);
-  ASSERT_EQ(fixture.append(11, "old"), AcceptResult::TEXT_APPENDED);
-  ASSERT_EQ(fixture.append(13, "gap"), AcceptResult::OUT_OF_ORDER);
-
-  EXPECT_EQ(fixture.reset(500), AcceptResult::STREAM_RESET);
-  EXPECT_TRUE(fixture.receiver.synchronized());
-  EXPECT_STREQ(fixture.receiver.currentText(), "");
-  EXPECT_EQ(fixture.append(501, "new"), AcceptResult::TEXT_APPENDED);
-  EXPECT_EQ(std::string_view(fixture.receiver.currentText()), "new");
+  ASSERT_EQ(fixture.begin(20, 6, "", ble_terminal::FRAME_FLAG_PRESENT), AcceptResult::FRAME_STARTED);
+  EXPECT_EQ(fixture.commit(21, 6), AcceptResult::FRAME_COMMITTED);
+  EXPECT_EQ(fixture.receiver.frameLength(), 0U);
+  EXPECT_STREQ(fixture.receiver.frameText(), "");
 }
 
-TEST(BleTerminalProtocol, DuplicatePacketIsIgnored) {
-  ReceiverFixture fixture;
-  ASSERT_EQ(fixture.reset(7), AcceptResult::STREAM_RESET);
-  ASSERT_EQ(fixture.append(8, "once"), AcceptResult::TEXT_APPENDED);
-
-  EXPECT_EQ(fixture.append(8, "once"), AcceptResult::DUPLICATE_IGNORED);
-  EXPECT_EQ(std::string_view(fixture.receiver.currentText()), "once");
-  EXPECT_TRUE(fixture.receiver.synchronized());
-}
-
-TEST(BleTerminalProtocol, TruncatesTailAndThenAcceptsReplacementText) {
-  ReceiverFixture fixture;
-  ASSERT_EQ(fixture.reset(20), AcceptResult::STREAM_RESET);
-  ASSERT_EQ(fixture.append(21, "old line\nworking..."), AcceptResult::TEXT_APPENDED);
-
-  EXPECT_EQ(fixture.truncate(22, 10), AcceptResult::TEXT_TRUNCATED);
-  EXPECT_EQ(std::string_view(fixture.receiver.currentText()), "old line\n");
-  EXPECT_EQ(fixture.append(23, "complete\n"), AcceptResult::TEXT_APPENDED);
-  EXPECT_EQ(std::string_view(fixture.receiver.currentText()), "old line\ncomplete\n");
-  EXPECT_EQ(fixture.receiver.expectedSequence(), 24U);
-}
-
-TEST(BleTerminalProtocol, RejectsTruncateOutsideTextOrInsideUtf8Codepoint) {
-  ReceiverFixture fixture;
-  ASSERT_EQ(fixture.reset(1), AcceptResult::STREAM_RESET);
-  ASSERT_EQ(fixture.append(2, "AЖB"), AcceptResult::TEXT_APPENDED);
-
-  EXPECT_EQ(fixture.truncate(3, 2), AcceptResult::INVALID_TRUNCATE);
-  EXPECT_FALSE(fixture.receiver.synchronized());
-  EXPECT_EQ(std::string_view(fixture.receiver.currentText()), "AЖB");
-
-  ASSERT_EQ(fixture.reset(10), AcceptResult::STREAM_RESET);
-  ASSERT_EQ(fixture.append(11, "short"), AcceptResult::TEXT_APPENDED);
-  EXPECT_EQ(fixture.truncate(12, 6), AcceptResult::INVALID_TRUNCATE);
-  EXPECT_FALSE(fixture.receiver.synchronized());
-  EXPECT_EQ(std::string_view(fixture.receiver.currentText()), "short");
-}
-
-TEST(BleTerminalProtocol, DuplicateTruncateIsIgnored) {
-  ReceiverFixture fixture;
-  ASSERT_EQ(fixture.reset(30), AcceptResult::STREAM_RESET);
-  ASSERT_EQ(fixture.append(31, "abcdef"), AcceptResult::TEXT_APPENDED);
-  ASSERT_EQ(fixture.truncate(32, 2), AcceptResult::TEXT_TRUNCATED);
-
-  EXPECT_EQ(fixture.truncate(32, 2), AcceptResult::DUPLICATE_IGNORED);
-  EXPECT_EQ(std::string_view(fixture.receiver.currentText()), "abcd");
-  EXPECT_TRUE(fixture.receiver.synchronized());
-}
-
-TEST(BleTerminalProtocol, RejectsInvalidUtf8AndAnsiControls) {
-  ReceiverFixture fixture;
-  ASSERT_EQ(fixture.reset(1), AcceptResult::STREAM_RESET);
-
-  const std::string invalidUtf8{"\xF0\x28\x8C\x28", 4};
-  EXPECT_EQ(fixture.append(2, invalidUtf8), AcceptResult::INVALID_TEXT);
-  EXPECT_FALSE(fixture.receiver.synchronized());
-
-  ASSERT_EQ(fixture.reset(10), AcceptResult::STREAM_RESET);
-  EXPECT_EQ(fixture.append(11, "hello\x1B[31m"), AcceptResult::INVALID_TEXT);
-  EXPECT_FALSE(fixture.receiver.synchronized());
-}
-
-TEST(BleTerminalProtocol, DiscardsOldestWholeLinesAtCapacity) {
+TEST(BleTerminalProtocol, RejectsInvalidUtf8AndOversizedFrame) {
   ReceiverFixture<16> fixture;
-  ASSERT_EQ(fixture.reset(1), AcceptResult::STREAM_RESET);
-  ASSERT_EQ(fixture.append(2, "one\ntwo\n"), AcceptResult::TEXT_APPENDED);
-  ASSERT_EQ(fixture.append(3, "three\n"), AcceptResult::TEXT_APPENDED);
-  ASSERT_EQ(fixture.append(4, "four\n"), AcceptResult::TEXT_APPENDED);
+  const std::string invalidUtf8{"\xF0\x28\x8C\x28", 4};
+  ASSERT_EQ(fixture.begin(1, 1, invalidUtf8), AcceptResult::FRAME_STARTED);
+  EXPECT_EQ(fixture.data(2, invalidUtf8), AcceptResult::INVALID_TEXT);
 
-  EXPECT_EQ(fixture.receiver.currentLength(), 15U);
-  EXPECT_EQ(std::string_view(fixture.receiver.currentText()), "two\nthree\nfour\n");
-  EXPECT_EQ(fixture.receiver.lastDiscardedBytes(), 4U);
-
-  ASSERT_EQ(fixture.append(5, "five\n"), AcceptResult::TEXT_APPENDED);
-  EXPECT_EQ(fixture.receiver.lastDiscardedBytes(), 10U);
-  EXPECT_EQ(std::string_view(fixture.receiver.currentText()), "four\nfive\n");
+  EXPECT_EQ(fixture.begin(10, 2, std::string(16, 'x')), AcceptResult::TOO_LARGE);
 }
 
-TEST(BleTerminalProtocol, RejectsPacketLargerThanReceiverCapacity) {
-  ReceiverFixture<8> fixture;
-  ASSERT_EQ(fixture.reset(1), AcceptResult::STREAM_RESET);
-  EXPECT_EQ(fixture.append(2, "12345678"), AcceptResult::TOO_LARGE);
-  EXPECT_FALSE(fixture.receiver.synchronized());
-}
-
-TEST(BleTerminalProtocol, RejectsMalformedHeaderAndLength) {
+TEST(BleTerminalProtocol, RejectsMalformedHeaderAndVersion) {
   ReceiverFixture fixture;
-  auto reset = packet(PacketType::STREAM_RESET, 1);
-
-  reset[0] = 'B';
-  EXPECT_EQ(fixture.accept(reset), AcceptResult::INVALID_PACKET);
-  reset[0] = 'X';
-  reset[2] = 1;
-  EXPECT_EQ(fixture.accept(reset), AcceptResult::UNSUPPORTED_VERSION);
-  reset[2] = 2;
-  reset[8]++;
-  EXPECT_EQ(fixture.accept(reset), AcceptResult::INVALID_PACKET);
+  auto begin = packet(PacketType::FRAME_BEGIN, 1, std::string(11, '\0'));
+  begin[0] = 'B';
+  EXPECT_EQ(fixture.accept(begin), AcceptResult::INVALID_PACKET);
+  begin[0] = 'X';
+  begin[2] = 2;
+  EXPECT_EQ(fixture.accept(begin), AcceptResult::UNSUPPORTED_VERSION);
+  begin[2] = 3;
+  begin[8]++;
+  EXPECT_EQ(fixture.accept(begin), AcceptResult::INVALID_PACKET);
 }
 
-TEST(BleTerminalProtocol, TruncatedPacketsCannotChangeText) {
+TEST(BleTerminalProtocol, RejectsUnknownFrameFlags) {
   ReceiverFixture fixture;
-  ASSERT_EQ(fixture.reset(1), AcceptResult::STREAM_RESET);
-  ASSERT_EQ(fixture.append(2, "stable"), AcceptResult::TEXT_APPENDED);
-  const auto valid = packet(PacketType::STREAM_APPEND, 3, "new text");
-
-  for (size_t length = 0; length < valid.size(); ++length) {
-    EXPECT_NE(fixture.receiver.accept(valid.data(), length), AcceptResult::TEXT_APPENDED);
-    EXPECT_EQ(std::string_view(fixture.receiver.currentText()), "stable");
-  }
+  EXPECT_EQ(fixture.begin(1, 1, "text", 0x80), AcceptResult::INVALID_FRAME);
+  EXPECT_FALSE(fixture.receiver.receiving());
 }
 
-TEST(BleTerminalProtocol, EncodesOnlyAllowListedActions) {
-  std::array<uint8_t, ble_terminal::PACKET_HEADER_BYTES + 1> output{};
-  const size_t length = ble_terminal::encodeActionPacket(ble_terminal::Action::INTERRUPT_SESSION, 0x12345678U,
+TEST(BleTerminalProtocol, EncodesReaderControlsAndCommands) {
+  std::array<uint8_t, ble_terminal::MAX_PACKET_BYTES> output{};
+  size_t length = ble_terminal::encodeFrameRequestPacket(ble_terminal::FrameRequest::PREVIOUS, 0x12345678U, 7,
                                                          output.data(), output.size());
+  ASSERT_EQ(length, ble_terminal::PACKET_HEADER_BYTES + 5);
+  EXPECT_EQ(output[2], 3);
+  EXPECT_EQ(output[3], static_cast<uint8_t>(PacketType::FRAME_REQUEST));
+  EXPECT_EQ(output[ble_terminal::PACKET_HEADER_BYTES], static_cast<uint8_t>(ble_terminal::FrameRequest::PREVIOUS));
+  EXPECT_EQ(output[ble_terminal::PACKET_HEADER_BYTES + 1], 0x78);
 
-  ASSERT_EQ(length, output.size());
-  const std::array<uint8_t, ble_terminal::PACKET_HEADER_BYTES + 1> expected{
-      'X',
-      'T',
-      2,
-      static_cast<uint8_t>(PacketType::ACTION),
-      0x78,
-      0x56,
-      0x34,
-      0x12,
-      1,
-      0,
-      static_cast<uint8_t>(ble_terminal::Action::INTERRUPT_SESSION)};
-  EXPECT_EQ(output, expected);
-  EXPECT_EQ(ble_terminal::encodeActionPacket(static_cast<ble_terminal::Action>(0xFF), 1, output.data(), output.size()),
-            0U);
-  EXPECT_EQ(ble_terminal::encodeActionPacket(ble_terminal::Action::SUBMIT_INPUT, 1, output.data(), output.size() - 1),
-            0U);
+  length = ble_terminal::encodeFrameStatusPacket(42, ble_terminal::FrameStatus::READY, 8, output.data(), output.size());
+  ASSERT_EQ(length, ble_terminal::PACKET_HEADER_BYTES + 5);
+  EXPECT_EQ(output[3], static_cast<uint8_t>(PacketType::FRAME_STATUS));
+  EXPECT_EQ(output[ble_terminal::PACKET_HEADER_BYTES], 42);
 
-  EXPECT_EQ(ble_terminal::encodeActionPacket(ble_terminal::Action::PAGE_UP, 9, output.data(), output.size()),
-            output.size());
-  EXPECT_EQ(output[ble_terminal::PACKET_HEADER_BYTES], static_cast<uint8_t>(ble_terminal::Action::PAGE_UP));
-  EXPECT_EQ(ble_terminal::encodeActionPacket(ble_terminal::Action::PAGE_DOWN, 10, output.data(), output.size()),
-            output.size());
-  EXPECT_EQ(output[ble_terminal::PACKET_HEADER_BYTES], static_cast<uint8_t>(ble_terminal::Action::PAGE_DOWN));
-}
-
-TEST(BleTerminalProtocol, EncodesOneUtf8CommandLine) {
-  std::array<uint8_t, ble_terminal::MAX_PACKET_BYTES> output{};
   const std::string command = "echo Привет";
-  const size_t length = ble_terminal::encodeCommandPacket(reinterpret_cast<const uint8_t*>(command.data()),
-                                                          command.size(), 0x12345678U, output.data(), output.size());
-
-  ASSERT_EQ(length, ble_terminal::PACKET_HEADER_BYTES + command.size());
-  EXPECT_EQ(output[0], 'X');
-  EXPECT_EQ(output[1], 'T');
-  EXPECT_EQ(output[2], 2);
-  EXPECT_EQ(output[3], static_cast<uint8_t>(PacketType::COMMAND));
-  EXPECT_EQ(output[4], 0x78);
-  EXPECT_EQ(output[5], 0x56);
-  EXPECT_EQ(output[6], 0x34);
-  EXPECT_EQ(output[7], 0x12);
-  EXPECT_EQ(output[8], command.size());
-  EXPECT_EQ(output[9], 0);
-  EXPECT_EQ(std::string_view(reinterpret_cast<const char*>(output.data() + ble_terminal::PACKET_HEADER_BYTES),
-                             command.size()),
-            command);
-}
-
-TEST(BleTerminalProtocol, RejectsInvalidCommandLines) {
-  std::array<uint8_t, ble_terminal::MAX_PACKET_BYTES> output{};
-  const auto encode = [&](const std::string& command) {
-    return ble_terminal::encodeCommandPacket(reinterpret_cast<const uint8_t*>(command.data()), command.size(), 1,
+  length = ble_terminal::encodeCommandPacket(reinterpret_cast<const uint8_t*>(command.data()), command.size(), 9,
                                              output.data(), output.size());
-  };
-
-  EXPECT_EQ(encode(""), 0U);
-  EXPECT_EQ(encode("two\nlines"), 0U);
-  EXPECT_EQ(encode("tab\tcompletion"), 0U);
-  EXPECT_EQ(encode(std::string("bad\x1b"
-                               "command",
-                               11)),
-            0U);
-  EXPECT_EQ(encode(std::string(ble_terminal::MAX_COMMAND_BYTES + 1, 'x')), 0U);
-
-  const std::string maximum(ble_terminal::MAX_COMMAND_BYTES, 'x');
-  EXPECT_EQ(encode(maximum), ble_terminal::MAX_PACKET_BYTES);
-  EXPECT_EQ(ble_terminal::encodeCommandPacket(reinterpret_cast<const uint8_t*>(maximum.data()), maximum.size(), 1,
-                                              output.data(), output.size() - 1),
+  ASSERT_EQ(length, ble_terminal::PACKET_HEADER_BYTES + command.size());
+  EXPECT_EQ(output[3], static_cast<uint8_t>(PacketType::COMMAND));
+  EXPECT_EQ(ble_terminal::encodeCommandPacket(reinterpret_cast<const uint8_t*>("two\nlines"), 9, 10, output.data(),
+                                              output.size()),
             0U);
 }
 

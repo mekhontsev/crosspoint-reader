@@ -9,40 +9,46 @@ import re
 import secrets
 import struct
 import sys
+import zlib
 from collections.abc import Iterable, Iterator
+from dataclasses import dataclass
 
 
 DEVICE_NAME = "X4 Terminal"
-RX_CHARACTERISTIC_UUID = "6f2c8f10-7f7a-4f1e-a2a6-8e8b7b3f6c12"
-TX_CHARACTERISTIC_UUID = "6f2c8f10-7f7a-4f1e-a2a6-8e8b7b3f6c13"
+RX_CHARACTERISTIC_UUID = "6f2c8f10-7f7a-4f1e-a2a6-8e8b7b3f6d12"
+TX_CHARACTERISTIC_UUID = "6f2c8f10-7f7a-4f1e-a2a6-8e8b7b3f6d13"
 
 MAGIC = b"XT"
-PROTOCOL_VERSION = 2
-STREAM_RESET = 1
-STREAM_APPEND = 2
+PROTOCOL_VERSION = 3
+FRAME_BEGIN = 1
+FRAME_DATA = 2
 ACTION = 3
 COMMAND = 4
-STREAM_TRUNCATE = 5
+FRAME_COMMIT = 5
+FRAME_REQUEST = 6
+FRAME_STATUS = 7
 PACKET_HEADER_BYTES = 10
 MAX_PACKET_BYTES = 244
 MAX_PAYLOAD_BYTES = MAX_PACKET_BYTES - PACKET_HEADER_BYTES
+MAX_FRAME_BYTES = 6 * 1024
 
-DEMO_REPLACE_FROM = "Status: working...\n"
-DEMO_REPLACE_TO = "Status: complete\n"
-DEMO_HISTORY_LINES = 300
+FRAME_FLAG_LATEST = 1
+FRAME_FLAG_PRESENT = 2
+FRAME_FLAG_RESET_CACHE = 4
 
 ACTION_NAMES = {
     1: "interrupt",
     2: "approve",
     3: "reject",
     4: "submit-input",
-    5: "page-up",
-    6: "page-down",
 }
+
+FRAME_REQUEST_NAMES = {0: "current", 1: "previous", 2: "next"}
+FRAME_STATUS_NAMES = {0: "ready", 1: "retry"}
 
 # Covers CSI, OSC, DCS, SOS, PM, APC, and two-byte ESC sequences. This is a
 # test bridge, not a terminal emulator; cursor-addressed output is intentionally
-# reduced to a plain append-only stream.
+# reduced to plain text before it enters an atomic frame.
 ANSI_ESCAPE = re.compile(
     r"\x1B(?:"
     r"\[[0-?]*[ -/]*[@-~]"
@@ -61,10 +67,17 @@ def make_packet(packet_type: int, sequence: int, payload: bytes = b"") -> bytes:
     ) + payload
 
 
-def make_truncate_packet(sequence: int, bytes_to_remove: int) -> bytes:
-    if not 1 <= bytes_to_remove <= 0xFFFF:
-        raise ValueError("truncate length must fit a nonzero uint16")
-    return make_packet(STREAM_TRUNCATE, sequence, struct.pack("<H", bytes_to_remove))
+def make_frame_begin(sequence: int, frame_id: int, frame: bytes, flags: int) -> bytes:
+    if not 1 <= frame_id <= 0xFFFFFFFF or len(frame) > MAX_FRAME_BYTES:
+        raise ValueError("invalid frame metadata")
+    payload = struct.pack("<IHIB", frame_id, len(frame), zlib.crc32(frame), flags)
+    return make_packet(FRAME_BEGIN, sequence, payload)
+
+
+def make_frame_commit(sequence: int, frame_id: int) -> bytes:
+    if not 1 <= frame_id <= 0xFFFFFFFF:
+        raise ValueError("invalid frame id")
+    return make_packet(FRAME_COMMIT, sequence, struct.pack("<I", frame_id))
 
 
 def clean_display_text(text: str) -> str:
@@ -87,7 +100,15 @@ def utf8_chunks(text: str, byte_limit: int) -> Iterator[bytes]:
         yield bytes(chunk)
 
 
-def parse_reader_packet(data: bytearray) -> str | None:
+@dataclass(frozen=True)
+class ReaderPacket:
+    description: str
+    packet_type: int
+    frame_id: int = 0
+    control: int = 0
+
+
+def parse_reader_packet(data: bytearray) -> ReaderPacket | None:
     if len(data) < PACKET_HEADER_BYTES:
         return None
     magic, version, packet_type, sequence, payload_length = struct.unpack("<2sBBIH", data[:10])
@@ -96,10 +117,10 @@ def parse_reader_packet(data: bytearray) -> str | None:
 
     payload = bytes(data[PACKET_HEADER_BYTES:])
     if packet_type == ACTION:
-        if payload_length != 1:
+        if payload_length != 1 or payload[0] not in ACTION_NAMES:
             return None
-        action = ACTION_NAMES.get(payload[0], f"unknown-{payload[0]}")
-        return f"action={action}, sequence={sequence}"
+        action = ACTION_NAMES[payload[0]]
+        return ReaderPacket(f"action={action}, sequence={sequence}", ACTION)
 
     if packet_type == COMMAND:
         if not payload:
@@ -110,48 +131,89 @@ def parse_reader_packet(data: bytearray) -> str | None:
             return None
         if any(char in "\n\t" or ord(char) < 0x20 or 0x7F <= ord(char) <= 0x9F for char in command):
             return None
-        return f"command={command!r} + Enter, sequence={sequence}"
+        return ReaderPacket(f"command={command!r} + Enter, sequence={sequence}", COMMAND)
+
+    if packet_type == FRAME_REQUEST:
+        if payload_length != 5 or payload[0] not in FRAME_REQUEST_NAMES:
+            return None
+        anchor = struct.unpack("<I", payload[1:])[0]
+        name = FRAME_REQUEST_NAMES[payload[0]]
+        return ReaderPacket(
+            f"frame-request={name}, anchor={anchor}, sequence={sequence}",
+            FRAME_REQUEST,
+            anchor,
+            payload[0],
+        )
+
+    if packet_type == FRAME_STATUS:
+        if payload_length != 5 or payload[4] not in FRAME_STATUS_NAMES:
+            return None
+        frame_id = struct.unpack("<I", payload[:4])[0]
+        if frame_id == 0:
+            return None
+        name = FRAME_STATUS_NAMES[payload[4]]
+        return ReaderPacket(
+            f"frame-status={name}, frame={frame_id}, sequence={sequence}",
+            FRAME_STATUS,
+            frame_id,
+            payload[4],
+        )
 
     return None
 
 
 def demo_source() -> Iterable[str]:
     yield "X4 Terminal BLE test\n"
-    yield "Only new UTF-8 text is being transferred.\n"
-    yield "The reader should coalesce these packets into slow e-ink refreshes.\n"
+    yield "Complete UTF-8 screens are committed atomically.\n"
+    yield "The sender waits while the reader refreshes its e-ink panel.\n"
     yield "Русский текст: соединение работает.\n"
-    yield "".join(f"History line {line:03d}: retained before tail replacement.\n" for line in range(1, DEMO_HISTORY_LINES + 1))
-    yield DEMO_REPLACE_FROM
+
+
+def bound_frame(text: str) -> str:
+    encoded = text.encode("utf-8")
+    if len(encoded) <= MAX_FRAME_BYTES:
+        return text
+    encoded = encoded[-MAX_FRAME_BYTES:]
+    while encoded and encoded[0] & 0xC0 == 0x80:
+        encoded = encoded[1:]
+    text = encoded.decode("utf-8")
+    newline = text.find("\n")
+    return text[newline + 1 :] if newline >= 0 else text
+
+
+def frame_packets(text: str, frame_id: int, sequence: int, packet_limit: int, flags: int):
+    encoded = text.encode("utf-8")
+    yield make_frame_begin(sequence, frame_id, encoded, flags)
+    sequence = (sequence + 1) & 0xFFFFFFFF
+    for payload in utf8_chunks(text, packet_limit - PACKET_HEADER_BYTES):
+        yield make_packet(FRAME_DATA, sequence, payload)
+        sequence = (sequence + 1) & 0xFFFFFFFF
+    yield make_frame_commit(sequence, frame_id)
 
 
 def run_self_test() -> None:
-    reset = make_packet(STREAM_RESET, 7)
-    assert reset == b"XT\x02\x01\x07\x00\x00\x00\x00\x00"
-    truncate = make_truncate_packet(8, len(DEMO_REPLACE_FROM.encode("utf-8")))
-    assert truncate == b"XT\x02\x05\x08\x00\x00\x00\x02\x00\x13\x00"
-    for invalid_length in (0, 0x10000):
-        try:
-            make_truncate_packet(9, invalid_length)
-        except ValueError:
-            pass
-        else:
-            raise AssertionError("invalid truncate length was accepted")
-    demo = "".join(demo_source())
-    assert demo.count("History line ") == DEMO_HISTORY_LINES
-    assert demo.endswith(DEMO_REPLACE_FROM)
+    begin = make_frame_begin(7, 9, b"hi", FRAME_FLAG_LATEST | FRAME_FLAG_PRESENT)
+    assert begin.hex() == "58540301070000000b00090000000200ac2a93d803"
+    assert make_packet(FRAME_DATA, 8, b"hi").hex() == "585403020800000002006869"
+    assert make_frame_commit(9, 9).hex() == "5854030509000000040009000000"
     assert clean_display_text("a\x1b[31mred\x1b[0m\r\nb\x00") == "ared\nb"
     chunks = list(utf8_chunks("AЖ🙂B", 5))
     assert b"".join(chunks).decode("utf-8") == "AЖ🙂B"
     assert all(len(chunk) <= 5 for chunk in chunks)
     action = make_packet(ACTION, 11, b"\x01")
-    assert parse_reader_packet(bytearray(action)) == "action=interrupt, sequence=11"
-    page_up = make_packet(ACTION, 12, b"\x05")
-    page_down = make_packet(ACTION, 13, b"\x06")
-    assert parse_reader_packet(bytearray(page_up)) == "action=page-up, sequence=12"
-    assert parse_reader_packet(bytearray(page_down)) == "action=page-down, sequence=13"
+    assert parse_reader_packet(bytearray(action)).description == "action=interrupt, sequence=11"
     command = make_packet(COMMAND, 14, "echo Привет".encode())
-    assert parse_reader_packet(bytearray(command)) == "command='echo Привет' + Enter, sequence=14"
+    assert parse_reader_packet(bytearray(command)).description == "command='echo Привет' + Enter, sequence=14"
     assert parse_reader_packet(bytearray(make_packet(COMMAND, 15, b"bad\ncommand"))) is None
+    request = make_packet(FRAME_REQUEST, 16, struct.pack("<BI", 1, 9))
+    assert parse_reader_packet(bytearray(request)).description == (
+        "frame-request=previous, anchor=9, sequence=16"
+    )
+    status = make_packet(FRAME_STATUS, 17, struct.pack("<IB", 9, 0))
+    assert parse_reader_packet(bytearray(status)).description == (
+        "frame-status=ready, frame=9, sequence=17"
+    )
+    assert len(bound_frame("line\n" * 2000).encode("utf-8")) <= MAX_FRAME_BYTES
     print("BLE terminal client self-test passed")
 
 
@@ -285,58 +347,71 @@ async def send(args: argparse.Namespace) -> None:
 
         await pair_with_reader_passkey(client)
 
-        # An ATT Write Request can carry MTU - 3 bytes. Ten bytes belong to our
-        # envelope, so the remaining bytes are safe for independently valid
-        # UTF-8. Keep the protocol's absolute 244-byte value limit as a ceiling.
+        # An ATT Write Request can carry MTU - 3 bytes. Keep the protocol's
+        # absolute 244-byte value limit as a ceiling.
         packet_limit = min(MAX_PACKET_BYTES, max(PACKET_HEADER_BYTES + 4, client.mtu_size - 3))
-        append_limit = packet_limit - PACKET_HEADER_BYTES
-        print(f"Connected; ATT MTU={client.mtu_size}, append payload={append_limit} bytes")
+        print(f"Connected; ATT MTU={client.mtu_size}, frame-data payload={packet_limit - PACKET_HEADER_BYTES} bytes")
+
+        initial_request = asyncio.Event()
+        frame_finished = asyncio.Event()
+        expected_status_frame = 0
+        retry_requested = False
 
         def on_reader_packet(_characteristic, data: bytearray) -> None:
+            nonlocal retry_requested
             description = parse_reader_packet(data)
-            print(f"Reader -> PC: {description or ('invalid packet ' + data.hex())}")
+            print(f"Reader -> PC: {description.description if description else ('invalid packet ' + data.hex())}")
+            if description is None:
+                return
+            if description.packet_type == FRAME_REQUEST and description.control == 0:
+                initial_request.set()
+            elif description.packet_type == FRAME_STATUS and description.frame_id == expected_status_frame:
+                retry_requested = description.control == 1
+                frame_finished.set()
 
         await client.start_notify(TX_CHARACTERISTIC_UUID, on_reader_packet)
 
+        try:
+            await asyncio.wait_for(initial_request.wait(), timeout=15.0)
+        except asyncio.TimeoutError as error:
+            raise SystemExit("The reader did not request its current screen") from error
+
         sequence = secrets.randbits(32)
-        await write_packet(
-            client,
-            RX_CHARACTERISTIC_UUID,
-            make_packet(STREAM_RESET, sequence),
-            args.write_retries,
-        )
-        sequence = (sequence + 1) & 0xFFFFFFFF
+        frame_id = secrets.randbelow(0xFFFFFFFE) + 1
+        current_text = ""
+        first_frame = True
 
         async for raw_text in text_source(args.source, args.demo_delay):
-            clean_text = clean_display_text(raw_text)
-            for payload in utf8_chunks(clean_text, append_limit):
-                await write_packet(
-                    client,
-                    RX_CHARACTERISTIC_UUID,
-                    make_packet(STREAM_APPEND, sequence, payload),
-                    args.write_retries,
-                )
-                sequence = (sequence + 1) & 0xFFFFFFFF
-                if args.packet_delay:
-                    await asyncio.sleep(args.packet_delay)
+            current_text = bound_frame(current_text + clean_display_text(raw_text))
+            flags = FRAME_FLAG_LATEST | FRAME_FLAG_PRESENT
+            if first_frame:
+                flags |= FRAME_FLAG_RESET_CACHE
+            first_frame = False
 
-        if args.source is None:
-            await write_packet(
-                client,
-                RX_CHARACTERISTIC_UUID,
-                make_truncate_packet(sequence, len(DEMO_REPLACE_FROM.encode("utf-8"))),
-                args.write_retries,
-            )
-            sequence = (sequence + 1) & 0xFFFFFFFF
-            for payload in utf8_chunks(DEMO_REPLACE_TO, append_limit):
+            while True:
+                expected_status_frame = frame_id
+                retry_requested = False
+                frame_finished.clear()
+                packets = list(frame_packets(current_text, frame_id, sequence, packet_limit, flags))
                 await write_packet(
-                    client,
-                    RX_CHARACTERISTIC_UUID,
-                    make_packet(STREAM_APPEND, sequence, payload),
-                    args.write_retries,
+                    client, RX_CHARACTERISTIC_UUID, packets[0], args.write_retries
                 )
+                for packet in packets[1:]:
+                    sequence = (sequence + 1) & 0xFFFFFFFF
+                    await write_packet(client, RX_CHARACTERISTIC_UUID, packet, args.write_retries)
+                    if args.packet_delay:
+                        await asyncio.sleep(args.packet_delay)
                 sequence = (sequence + 1) & 0xFFFFFFFF
-            print("Protocol-v2 tail replacement sent")
+
+                try:
+                    await asyncio.wait_for(frame_finished.wait(), timeout=20.0)
+                except asyncio.TimeoutError as error:
+                    raise SystemExit(f"The reader did not finish frame {frame_id}") from error
+                if not retry_requested:
+                    break
+                print(f"Reader requested retry for frame {frame_id}")
+
+            frame_id = (frame_id + 1) & 0xFFFFFFFF or 1
 
         if args.wait_after:
             print(f"Transmission complete; waiting {args.wait_after:g} seconds for reader input ...")
@@ -345,7 +420,7 @@ async def send(args: argparse.Namespace) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Send protocol-v2 UTF-8 text to the experimental X4 Terminal BLE screen."
+        description="Send protocol-v3 atomic UTF-8 frames to the experimental X4 Terminal BLE screen."
     )
     parser.add_argument(
         "source",

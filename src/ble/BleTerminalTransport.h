@@ -35,6 +35,8 @@ class BleTerminalTransport final {
   bool poll(IncomingPacket& packet);
   bool sendAction(Action action);
   bool sendCommand(const std::string& command);
+  bool sendFrameRequest(FrameRequest request, uint32_t anchorFrameId);
+  bool sendFrameStatus(uint32_t frameId, FrameStatus status);
   bool readyToSend() const;
   size_t maxCommandBytes() const;
   void setTransferActive(bool active);
@@ -58,6 +60,7 @@ class BleTerminalTransport final {
   std::atomic<uint32_t> pairingPasskey_{0};
   std::atomic<uint16_t> connectionHandle_{NO_CONNECTION};
   std::atomic<bool> indicationsEnabled_{false};
+  std::atomic<bool> indicationInFlight_{false};
   std::atomic<bool> stopping_{false};
   std::atomic<bool> transferActive_{false};
   bool stackInitialized_ = false;

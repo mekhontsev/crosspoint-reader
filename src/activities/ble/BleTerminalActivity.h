@@ -24,39 +24,60 @@ class BleTerminalActivity final : public Activity {
   bool preventAutoSleep() override;
 
  private:
-  static constexpr uint32_t MIN_DISPLAY_REFRESH_MS = 3000;
-  static constexpr uint32_t STREAM_QUIET_MS = 700;
-  static constexpr uint32_t MAX_DIRTY_LATENCY_MS = 3000;
   static constexpr uint32_t DATA_KEEP_AWAKE_MS = 5000;
   static constexpr uint32_t TRANSFER_IDLE_MS = 2000;
   static constexpr size_t DISPLAY_LINE_BYTES = 256;
+  static constexpr size_t FRAME_CACHE_SLOTS = 4;
+
+  struct CachedFrame {
+    std::array<char, ble_terminal::MAX_FRAME_BYTES + 1> text{};
+    uint32_t id = 0;
+    size_t length = 0;
+    bool occupied = false;
+    bool latest = false;
+  };
 
   ble_terminal::BleTerminalTransport& transport_;
-  std::array<char, ble_terminal::MAX_TRANSCRIPT_BYTES + 1> transcript_{};
+  std::array<CachedFrame, FRAME_CACHE_SLOTS> frames_{};
+  std::array<char, ble_terminal::MAX_FRAME_BYTES + 1> stagingFrame_{};
   std::array<char, DISPLAY_LINE_BYTES> displayLine_{};
-  ble_terminal::TextStreamReceiver receiver_;
-  StaticSemaphore_t transcriptMutexStorage_{};
-  SemaphoreHandle_t transcriptMutex_ = nullptr;
+  ble_terminal::TextFrameReceiver receiver_;
+  StaticSemaphore_t frameMutexStorage_{};
+  SemaphoreHandle_t frameMutex_ = nullptr;
 
   uint32_t observedStatusRevision_ = 0;
-  unsigned long dirtySince_ = 0;
+  uint32_t pendingStatusFrameId_ = 0;
+  uint32_t pendingRequestAnchor_ = 0;
+  uint32_t readyAfterRenderFrameId_ = 0;
   unsigned long lastPacketAt_ = 0;
   unsigned long lastTransferActivityAt_ = 0;
-  unsigned long lastDisplayRequestAt_ = 0;
-  bool screenDirty_ = false;
+  unsigned long nextControlAttemptAt_ = 0;
+  int8_t selectedSlot_ = -1;
+  uint8_t fontSizeIndex_ = 3;
+  ble_terminal::FrameStatus pendingFrameStatus_ = ble_terminal::FrameStatus::READY;
+  ble_terminal::FrameRequest pendingFrameRequest_ = ble_terminal::FrameRequest::CURRENT;
+  bool hasPendingStatus_ = false;
+  bool hasPendingRequest_ = false;
+  bool initialFrameRequested_ = false;
   bool needsReset_ = false;
   bool commandSendFailed_ = false;
-  bool followTail_ = true;
-  size_t viewportStart_ = 0;
-  uint8_t fontSizeIndex_ = 3;
+  bool followLatest_ = true;
+  bool cleanRequestedFrame_ = false;
+  bool cleanRefreshPending_ = false;
 
-  void markScreenDirty(unsigned long now);
   void formatStatusText(char* buffer, size_t bufferSize) const;
   void openCommandKeyboard();
   int terminalFontId() const;
   void changeFontSize(int direction);
-  void scrollPage(int direction);
-  void jumpToTail();
+  void navigateFrame(int direction);
+  void jumpToLatest();
+  void queueFrameRequest(ble_terminal::FrameRequest request, uint32_t anchorFrameId, bool cleanRefresh = false);
+  void trySendPendingControl();
+  bool cacheCommittedFrame();
+  int findFrameSlot(uint32_t frameId) const;
+  int chooseFrameSlot(uint32_t frameId) const;
+  uint32_t selectedFrameId() const;
+  void clearFrameCache();
 };
 
 #endif

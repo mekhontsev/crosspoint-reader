@@ -5,45 +5,50 @@
 
 namespace ble_terminal {
 
-// Application packets are sized for a negotiated ATT MTU of 247
-// (244 characteristic-value bytes). Smaller MTUs use smaller APPEND packets.
 constexpr size_t PACKET_HEADER_BYTES = 10;
 constexpr size_t MAX_PACKET_BYTES = 244;
 constexpr size_t MAX_COMMAND_BYTES = MAX_PACKET_BYTES - PACKET_HEADER_BYTES;
-constexpr size_t MAX_TRANSCRIPT_BYTES = 32 * 1024;
-static_assert(MAX_TRANSCRIPT_BYTES <= 0xFFFFU);
+constexpr size_t MAX_FRAME_BYTES = 6 * 1024;
 
 enum class PacketType : uint8_t {
-  STREAM_RESET = 1,
-  STREAM_APPEND = 2,
+  FRAME_BEGIN = 1,
+  FRAME_DATA = 2,
   ACTION = 3,
   COMMAND = 4,
-  STREAM_TRUNCATE = 5,
+  FRAME_COMMIT = 5,
+  FRAME_REQUEST = 6,
+  FRAME_STATUS = 7,
 };
 
-// Deliberately small allow-list for non-text controls.
 enum class Action : uint8_t {
   INTERRUPT_SESSION = 1,
   APPROVE_REQUEST = 2,
   REJECT_REQUEST = 3,
   SUBMIT_INPUT = 4,
-  PAGE_UP = 5,
-  PAGE_DOWN = 6,
 };
 
+enum class FrameRequest : uint8_t { CURRENT = 0, PREVIOUS = 1, NEXT = 2 };
+enum class FrameStatus : uint8_t { READY = 0, RETRY = 1 };
+
+constexpr uint8_t FRAME_FLAG_LATEST = 1U;
+constexpr uint8_t FRAME_FLAG_PRESENT = 1U << 1U;
+constexpr uint8_t FRAME_FLAG_RESET_CACHE = 1U << 2U;
+constexpr uint8_t FRAME_FLAGS_MASK = FRAME_FLAG_LATEST | FRAME_FLAG_PRESENT | FRAME_FLAG_RESET_CACHE;
+
 enum class AcceptResult : uint8_t {
-  STREAM_RESET,
-  TEXT_APPENDED,
-  TEXT_TRUNCATED,
+  FRAME_STARTED,
+  FRAME_DATA_ACCEPTED,
+  FRAME_COMMITTED,
   DUPLICATE_IGNORED,
   INVALID_PACKET,
   UNSUPPORTED_VERSION,
   UNEXPECTED_TYPE,
-  NEEDS_RESET,
+  NEEDS_BEGIN,
   OUT_OF_ORDER,
   TOO_LARGE,
   INVALID_TEXT,
-  INVALID_TRUNCATE,
+  INVALID_FRAME,
+  CRC_MISMATCH,
 };
 
 bool isValidDisplayText(const uint8_t* data, size_t length);
@@ -51,38 +56,42 @@ bool isValidCommandText(const uint8_t* data, size_t length);
 size_t encodeActionPacket(Action action, uint32_t sequence, uint8_t* output, size_t capacity);
 size_t encodeCommandPacket(const uint8_t* command, size_t commandLength, uint32_t sequence, uint8_t* output,
                            size_t capacity);
+size_t encodeFrameRequestPacket(FrameRequest request, uint32_t anchorFrameId, uint32_t sequence, uint8_t* output,
+                                size_t capacity);
+size_t encodeFrameStatusPacket(uint32_t frameId, FrameStatus status, uint32_t sequence, uint8_t* output,
+                               size_t capacity);
 
-// Allocation-free receiver for untrusted BLE writes. Android first sends a
-// STREAM_RESET packet and then sends plain UTF-8 in ordered STREAM_APPEND
-// packets as output arrives. STREAM_TRUNCATE replaces a changed tail without
-// discarding older pages. The buffer retains only the newest text; old complete
-// lines are discarded first when space is needed.
-class TextStreamReceiver final {
+class TextFrameReceiver final {
  public:
-  TextStreamReceiver(char* buffer, size_t capacity);
+  TextFrameReceiver(char* buffer, size_t capacity);
 
   AcceptResult accept(const uint8_t* packet, size_t length);
   void clear();
 
-  const char* currentText() const { return buffer_ ? buffer_ : ""; }
-  size_t currentLength() const { return currentLength_; }
-  size_t lastDiscardedBytes() const { return lastDiscardedBytes_; }
-  uint32_t expectedSequence() const { return expectedSequence_; }
-  bool synchronized() const { return synchronized_; }
+  const char* frameText() const { return buffer_ ? buffer_ : ""; }
+  size_t frameLength() const { return currentLength_; }
+  uint32_t frameId() const { return frameId_; }
+  uint8_t frameFlags() const { return frameFlags_; }
+  bool receiving() const { return receiving_; }
 
  private:
   char* buffer_;
   size_t capacity_;
-  size_t maxTextBytes_;
   size_t currentLength_ = 0;
-  size_t lastDiscardedBytes_ = 0;
+  size_t expectedLength_ = 0;
+  uint32_t expectedCrc_ = 0;
+  uint32_t frameId_ = 0;
+  uint8_t frameFlags_ = 0;
+  uint32_t beginSequence_ = 0;
   uint32_t expectedSequence_ = 0;
-  bool synchronized_ = false;
+  uint32_t committedSequence_ = 0;
+  uint32_t committedFrameId_ = 0;
+  bool receiving_ = false;
+  bool hasCommittedFrame_ = false;
 
-  AcceptResult acceptReset(uint32_t sequence, size_t payloadLength);
-  AcceptResult acceptAppend(uint32_t sequence, const uint8_t* payload, size_t payloadLength);
-  AcceptResult acceptTruncate(uint32_t sequence, const uint8_t* payload, size_t payloadLength);
-  void discardOldest(size_t bytesNeeded);
+  AcceptResult acceptBegin(uint32_t sequence, const uint8_t* payload, size_t payloadLength);
+  AcceptResult acceptData(uint32_t sequence, const uint8_t* payload, size_t payloadLength);
+  AcceptResult acceptCommit(uint32_t sequence, const uint8_t* payload, size_t payloadLength);
 };
 
 }  // namespace ble_terminal

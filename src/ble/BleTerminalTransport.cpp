@@ -51,11 +51,11 @@ static_assert(DEVICE_NAME_FIELD_BYTES <= LEGACY_ADVERTISING_MAX_BYTES);
 
 // UUIDs are stored least-significant byte first by NimBLE.
 const ble_uuid128_t SERVICE_UUID =
-    BLE_UUID128_INIT(0x11, 0x6c, 0x3f, 0x7b, 0x8b, 0x8e, 0xa6, 0xa2, 0x1e, 0x4f, 0x7a, 0x7f, 0x10, 0x8f, 0x2c, 0x6f);
+    BLE_UUID128_INIT(0x11, 0x6d, 0x3f, 0x7b, 0x8b, 0x8e, 0xa6, 0xa2, 0x1e, 0x4f, 0x7a, 0x7f, 0x10, 0x8f, 0x2c, 0x6f);
 const ble_uuid128_t RX_UUID =
-    BLE_UUID128_INIT(0x12, 0x6c, 0x3f, 0x7b, 0x8b, 0x8e, 0xa6, 0xa2, 0x1e, 0x4f, 0x7a, 0x7f, 0x10, 0x8f, 0x2c, 0x6f);
+    BLE_UUID128_INIT(0x12, 0x6d, 0x3f, 0x7b, 0x8b, 0x8e, 0xa6, 0xa2, 0x1e, 0x4f, 0x7a, 0x7f, 0x10, 0x8f, 0x2c, 0x6f);
 const ble_uuid128_t TX_UUID =
-    BLE_UUID128_INIT(0x13, 0x6c, 0x3f, 0x7b, 0x8b, 0x8e, 0xa6, 0xa2, 0x1e, 0x4f, 0x7a, 0x7f, 0x10, 0x8f, 0x2c, 0x6f);
+    BLE_UUID128_INIT(0x13, 0x6d, 0x3f, 0x7b, 0x8b, 0x8e, 0xa6, 0xa2, 0x1e, 0x4f, 0x7a, 0x7f, 0x10, 0x8f, 0x2c, 0x6f);
 
 ble_gatt_chr_def characteristics[3]{};
 ble_gatt_svc_def services[2]{};
@@ -131,6 +131,7 @@ bool BleTerminalTransport::start() {
   pairingPasskey_ = 0;
   connectionHandle_ = NO_CONNECTION;
   indicationsEnabled_ = false;
+  indicationInFlight_ = false;
   txValueHandle_ = 0;
   outgoingSequence_ = 0;
   stopping_.store(false);
@@ -228,6 +229,7 @@ void BleTerminalTransport::stop() {
   hostTaskStarted_ = false;
   connectionHandle_ = NO_CONNECTION;
   indicationsEnabled_ = false;
+  indicationInFlight_ = false;
   setPairingPasskey(0);
   stopping_.store(false);
   transferActive_.store(false);
@@ -254,9 +256,24 @@ bool BleTerminalTransport::sendCommand(const std::string& command) {
   return sendPacket(packet.data(), length, "reader command");
 }
 
+bool BleTerminalTransport::sendFrameRequest(const FrameRequest request, const uint32_t anchorFrameId) {
+  std::array<uint8_t, PACKET_HEADER_BYTES + 5> packet{};
+  const size_t length =
+      encodeFrameRequestPacket(request, anchorFrameId, outgoingSequence_, packet.data(), packet.size());
+  if (length == 0) return false;
+  return sendPacket(packet.data(), length, "frame request");
+}
+
+bool BleTerminalTransport::sendFrameStatus(const uint32_t frameId, const FrameStatus status) {
+  std::array<uint8_t, PACKET_HEADER_BYTES + 5> packet{};
+  const size_t length = encodeFrameStatusPacket(frameId, status, outgoingSequence_, packet.data(), packet.size());
+  if (length == 0) return false;
+  return sendPacket(packet.data(), length, "frame status");
+}
+
 bool BleTerminalTransport::readyToSend() const {
   return status() == Status::CONNECTED && connectionHandle_.load() != NO_CONNECTION && txValueHandle_ != 0 &&
-         indicationsEnabled_.load();
+         indicationsEnabled_.load() && !indicationInFlight_.load();
 }
 
 size_t BleTerminalTransport::maxCommandBytes() const {
@@ -299,10 +316,17 @@ bool BleTerminalTransport::sendPacket(const uint8_t* packet, const size_t length
     return false;
   }
 
+  bool expectedIdle = false;
+  if (!indicationInFlight_.compare_exchange_strong(expectedIdle, true)) return false;
+
   os_mbuf* value = ble_hs_mbuf_from_flat(packet, length);
-  if (!value) return false;
+  if (!value) {
+    indicationInFlight_ = false;
+    return false;
+  }
   const int result = ble_gatts_indicate_custom(connectionHandle, txValueHandle_, value);
   if (result != 0) {
+    indicationInFlight_ = false;
     LOG_ERR("BLE_TERM", "Unable to send %s (%d)", description, result);
     return false;
   }
@@ -388,6 +412,7 @@ int BleTerminalTransport::gapEvent(ble_gap_event* event, void*) {
       if (event->connect.status == 0) {
         instance->connectionHandle_ = event->connect.conn_handle;
         instance->indicationsEnabled_ = false;
+        instance->indicationInFlight_ = false;
         instance->transferActive_ = true;
         instance->setPairingPasskey(0);
         instance->setStatus(Status::PAIRING);
@@ -409,6 +434,7 @@ int BleTerminalTransport::gapEvent(ble_gap_event* event, void*) {
     case BLE_GAP_EVENT_DISCONNECT:
       instance->connectionHandle_ = NO_CONNECTION;
       instance->indicationsEnabled_ = false;
+      instance->indicationInFlight_ = false;
       instance->transferActive_ = false;
       instance->setPairingPasskey(0);
       if (!instance->stopping_.load()) {
@@ -423,8 +449,18 @@ int BleTerminalTransport::gapEvent(ble_gap_event* event, void*) {
       if (event->subscribe.attr_handle == instance->txValueHandle_) {
         const bool enabled = event->subscribe.cur_indicate != 0;
         if (instance->indicationsEnabled_.exchange(enabled) != enabled) instance->statusRevision_++;
+        if (!enabled) instance->indicationInFlight_ = false;
         LOG_INF("BLE_TERM", "Reader input indications %s",
                 instance->indicationsEnabled_.load() ? "enabled" : "disabled");
+      }
+      break;
+    case BLE_GAP_EVENT_NOTIFY_TX:
+      if (event->notify_tx.indication && event->notify_tx.attr_handle == instance->txValueHandle_ &&
+          event->notify_tx.status != 0) {
+        // An indication first reports "sent" (status 0), then a terminal
+        // confirmation or error. Keep one control packet in flight until that
+        // second event so page/refresh requests never hammer an EBUSY link.
+        instance->indicationInFlight_ = false;
       }
       break;
     case BLE_GAP_EVENT_ENC_CHANGE:

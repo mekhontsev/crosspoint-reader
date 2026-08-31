@@ -24,8 +24,8 @@
 
 int HomeActivity::getMenuItemCount() const {
   int count = 4;  // File Browser, Recents, File transfer, Settings
-#if defined(ENABLE_BLE_TERMINAL) && ENABLE_BLE_TERMINAL
-  count++;  // X4 Terminal
+#if defined(ENABLE_PLUGINS) && ENABLE_PLUGINS
+  count++;  // Plugins
 #endif
   if (!recentBooks.empty()) {
     count += recentBooks.size();
@@ -194,9 +194,9 @@ void HomeActivity::loop() {
       case HomeMenuItem::FILE_TRANSFER:
         onFileTransferOpen();
         break;
-#if defined(ENABLE_BLE_TERMINAL) && ENABLE_BLE_TERMINAL
-      case HomeMenuItem::TERMINAL:
-        onBleTerminalOpen();
+#if defined(ENABLE_PLUGINS) && ENABLE_PLUGINS
+      case HomeMenuItem::PLUGINS:
+        onPluginsOpen();
         break;
 #endif
       case HomeMenuItem::SETTINGS_MENU:
@@ -319,8 +319,8 @@ void HomeActivity::render(RenderLock&&) {
                                         tr(STR_SETTINGS_TITLE)};
   std::vector<UIIcon> menuIcons = {Folder, Recent, Transfer, Settings};
 
-#if defined(ENABLE_BLE_TERMINAL) && ENABLE_BLE_TERMINAL
-  menuItems.insert(menuItems.end() - 1, tr(STR_X4_TERMINAL));
+#if defined(ENABLE_PLUGINS) && ENABLE_PLUGINS
+  menuItems.insert(menuItems.end() - 1, tr(STR_PLUGINS));
   menuIcons.insert(menuIcons.end() - 1, Terminal);
 #endif
 
@@ -370,8 +370,8 @@ void HomeActivity::onSettingsOpen() { activityManager.goToSettings(); }
 
 void HomeActivity::onFileTransferOpen() { activityManager.goToFileTransfer(); }
 
-#if defined(ENABLE_BLE_TERMINAL) && ENABLE_BLE_TERMINAL
-void HomeActivity::onBleTerminalOpen() { activityManager.goToBleTerminal(); }
+#if defined(ENABLE_PLUGINS) && ENABLE_PLUGINS
+void HomeActivity::onPluginsOpen() { activityManager.goToPlugins(); }
 #endif
 
 void HomeActivity::onOpdsBrowserOpen() { activityManager.goToBrowser(); }

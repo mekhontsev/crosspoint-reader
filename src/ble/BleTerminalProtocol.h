@@ -18,6 +18,7 @@ enum class PacketType : uint8_t {
   FRAME_COMMIT = 5,
   FRAME_REQUEST = 6,
   FRAME_STATUS = 7,
+  VIEWPORT = 8,
 };
 
 enum class Action : uint8_t {
@@ -60,6 +61,7 @@ size_t encodeFrameRequestPacket(FrameRequest request, uint32_t anchorFrameId, ui
                                 size_t capacity);
 size_t encodeFrameStatusPacket(uint32_t frameId, FrameStatus status, uint32_t sequence, uint8_t* output,
                                size_t capacity);
+size_t encodeViewportPacket(uint16_t columns, uint16_t rows, uint32_t sequence, uint8_t* output, size_t capacity);
 
 class TextFrameReceiver final {
  public:

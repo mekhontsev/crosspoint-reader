@@ -7,7 +7,7 @@ namespace {
 
 constexpr uint8_t MAGIC_0 = 'X';
 constexpr uint8_t MAGIC_1 = 'T';
-constexpr uint8_t PROTOCOL_VERSION = 3;
+constexpr uint8_t PROTOCOL_VERSION = 4;
 constexpr size_t FRAME_BEGIN_PAYLOAD_BYTES = 11;
 constexpr size_t FRAME_ID_PAYLOAD_BYTES = sizeof(uint32_t);
 constexpr size_t FRAME_CONTROL_PAYLOAD_BYTES = sizeof(uint32_t) + sizeof(uint8_t);
@@ -170,6 +170,15 @@ size_t encodeFrameStatusPacket(const uint32_t frameId, const FrameStatus status,
   return encodePacket(PacketType::FRAME_STATUS, payload, sizeof(payload), sequence, output, capacity);
 }
 
+size_t encodeViewportPacket(const uint16_t columns, const uint16_t rows, const uint32_t sequence, uint8_t* output,
+                            const size_t capacity) {
+  if (columns == 0 || rows == 0) return 0;
+  uint8_t payload[sizeof(uint16_t) * 2]{};
+  writeLe16(payload, columns);
+  writeLe16(payload + sizeof(uint16_t), rows);
+  return encodePacket(PacketType::VIEWPORT, payload, sizeof(payload), sequence, output, capacity);
+}
+
 TextFrameReceiver::TextFrameReceiver(char* buffer, const size_t capacity) : buffer_(buffer), capacity_(capacity) {
   if (buffer_ && capacity_ > 0) buffer_[0] = '\0';
 }
@@ -213,6 +222,7 @@ AcceptResult TextFrameReceiver::accept(const uint8_t* packet, const size_t lengt
     case PacketType::COMMAND:
     case PacketType::FRAME_REQUEST:
     case PacketType::FRAME_STATUS:
+    case PacketType::VIEWPORT:
     default:
       return AcceptResult::UNEXPECTED_TYPE;
   }

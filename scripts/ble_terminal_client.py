@@ -19,7 +19,7 @@ RX_CHARACTERISTIC_UUID = "6f2c8f10-7f7a-4f1e-a2a6-8e8b7b3f6d12"
 TX_CHARACTERISTIC_UUID = "6f2c8f10-7f7a-4f1e-a2a6-8e8b7b3f6d13"
 
 MAGIC = b"XT"
-PROTOCOL_VERSION = 3
+PROTOCOL_VERSION = 4
 FRAME_BEGIN = 1
 FRAME_DATA = 2
 ACTION = 3
@@ -27,6 +27,7 @@ COMMAND = 4
 FRAME_COMMIT = 5
 FRAME_REQUEST = 6
 FRAME_STATUS = 7
+VIEWPORT = 8
 PACKET_HEADER_BYTES = 10
 MAX_PACKET_BYTES = 244
 MAX_PAYLOAD_BYTES = MAX_PACKET_BYTES - PACKET_HEADER_BYTES
@@ -159,6 +160,14 @@ def parse_reader_packet(data: bytearray) -> ReaderPacket | None:
             payload[4],
         )
 
+    if packet_type == VIEWPORT:
+        if payload_length != 4:
+            return None
+        columns, rows = struct.unpack("<HH", payload)
+        if columns == 0 or rows == 0:
+            return None
+        return ReaderPacket(f"viewport={columns}x{rows}, sequence={sequence}", VIEWPORT)
+
     return None
 
 
@@ -193,9 +202,9 @@ def frame_packets(text: str, frame_id: int, sequence: int, packet_limit: int, fl
 
 def run_self_test() -> None:
     begin = make_frame_begin(7, 9, b"hi", FRAME_FLAG_LATEST | FRAME_FLAG_PRESENT)
-    assert begin.hex() == "58540301070000000b00090000000200ac2a93d803"
-    assert make_packet(FRAME_DATA, 8, b"hi").hex() == "585403020800000002006869"
-    assert make_frame_commit(9, 9).hex() == "5854030509000000040009000000"
+    assert begin.hex() == "58540401070000000b00090000000200ac2a93d803"
+    assert make_packet(FRAME_DATA, 8, b"hi").hex() == "585404020800000002006869"
+    assert make_frame_commit(9, 9).hex() == "5854040509000000040009000000"
     assert clean_display_text("a\x1b[31mred\x1b[0m\r\nb\x00") == "ared\nb"
     chunks = list(utf8_chunks("AЖ🙂B", 5))
     assert b"".join(chunks).decode("utf-8") == "AЖ🙂B"
@@ -213,6 +222,8 @@ def run_self_test() -> None:
     assert parse_reader_packet(bytearray(status)).description == (
         "frame-status=ready, frame=9, sequence=17"
     )
+    viewport = make_packet(VIEWPORT, 18, struct.pack("<HH", 42, 38))
+    assert parse_reader_packet(bytearray(viewport)).description == "viewport=42x38, sequence=18"
     assert len(bound_frame("line\n" * 2000).encode("utf-8")) <= MAX_FRAME_BYTES
     print("BLE terminal client self-test passed")
 
@@ -420,7 +431,7 @@ async def send(args: argparse.Namespace) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Send protocol-v3 atomic UTF-8 frames to the experimental X4 Terminal BLE screen."
+        description="Send protocol-v4 atomic UTF-8 frames to the experimental X4 Terminal BLE screen."
     )
     parser.add_argument(
         "source",

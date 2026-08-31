@@ -35,7 +35,7 @@ uint32_t crc32(const std::string_view text) {
 }
 
 std::vector<uint8_t> packet(const PacketType type, const uint32_t sequence, const std::string_view payload = {}) {
-  std::vector<uint8_t> out{'X', 'T', 3, static_cast<uint8_t>(type)};
+  std::vector<uint8_t> out{'X', 'T', 4, static_cast<uint8_t>(type)};
   appendLe32(out, sequence);
   appendLe16(out, static_cast<uint16_t>(payload.size()));
   out.insert(out.end(), payload.begin(), payload.end());
@@ -153,7 +153,7 @@ TEST(BleTerminalProtocol, RejectsMalformedHeaderAndVersion) {
   begin[0] = 'X';
   begin[2] = 2;
   EXPECT_EQ(fixture.accept(begin), AcceptResult::UNSUPPORTED_VERSION);
-  begin[2] = 3;
+  begin[2] = 4;
   begin[8]++;
   EXPECT_EQ(fixture.accept(begin), AcceptResult::INVALID_PACKET);
 }
@@ -169,7 +169,7 @@ TEST(BleTerminalProtocol, EncodesReaderControlsAndCommands) {
   size_t length = ble_terminal::encodeFrameRequestPacket(ble_terminal::FrameRequest::PREVIOUS, 0x12345678U, 7,
                                                          output.data(), output.size());
   ASSERT_EQ(length, ble_terminal::PACKET_HEADER_BYTES + 5);
-  EXPECT_EQ(output[2], 3);
+  EXPECT_EQ(output[2], 4);
   EXPECT_EQ(output[3], static_cast<uint8_t>(PacketType::FRAME_REQUEST));
   EXPECT_EQ(output[ble_terminal::PACKET_HEADER_BYTES], static_cast<uint8_t>(ble_terminal::FrameRequest::PREVIOUS));
   EXPECT_EQ(output[ble_terminal::PACKET_HEADER_BYTES + 1], 0x78);
@@ -178,6 +178,13 @@ TEST(BleTerminalProtocol, EncodesReaderControlsAndCommands) {
   ASSERT_EQ(length, ble_terminal::PACKET_HEADER_BYTES + 5);
   EXPECT_EQ(output[3], static_cast<uint8_t>(PacketType::FRAME_STATUS));
   EXPECT_EQ(output[ble_terminal::PACKET_HEADER_BYTES], 42);
+
+  length = ble_terminal::encodeViewportPacket(42, 38, 9, output.data(), output.size());
+  ASSERT_EQ(length, ble_terminal::PACKET_HEADER_BYTES + 4);
+  EXPECT_EQ(output[3], static_cast<uint8_t>(PacketType::VIEWPORT));
+  EXPECT_EQ(output[ble_terminal::PACKET_HEADER_BYTES], 42);
+  EXPECT_EQ(output[ble_terminal::PACKET_HEADER_BYTES + 2], 38);
+  EXPECT_EQ(ble_terminal::encodeViewportPacket(0, 38, 9, output.data(), output.size()), 0U);
 
   const std::string command = "echo Привет";
   length = ble_terminal::encodeCommandPacket(reinterpret_cast<const uint8_t*>(command.data()), command.size(), 9,

@@ -124,27 +124,6 @@ EpdFont ui12MediumFont(&ubuntu_12_medium);
 EpdFont ui12BoldFont(&ubuntu_12_bold);
 EpdFontFamily ui12FontFamily(&ui12MediumFont, &ui12BoldFont);
 
-#if defined(ENABLE_BLE_TERMINAL) && ENABLE_BLE_TERMINAL
-EpdFont terminalMono8Font(&terminalmono_8_regular);
-EpdFont terminalMono10Font(&terminalmono_10_regular);
-EpdFont terminalMono12Font(&terminalmono_12_regular);
-EpdFont terminalMono14Font(&terminalmono_14_regular);
-EpdFont terminalMono16Font(&terminalmono_16_regular);
-EpdFont terminalMono18Font(&terminalmono_18_regular);
-EpdFont terminalMono20Font(&terminalmono_20_regular);
-EpdFont terminalMono22Font(&terminalmono_22_regular);
-EpdFont terminalMono24Font(&terminalmono_24_regular);
-EpdFontFamily terminalMono8FontFamily(&terminalMono8Font);
-EpdFontFamily terminalMono10FontFamily(&terminalMono10Font);
-EpdFontFamily terminalMono12FontFamily(&terminalMono12Font);
-EpdFontFamily terminalMono14FontFamily(&terminalMono14Font);
-EpdFontFamily terminalMono16FontFamily(&terminalMono16Font);
-EpdFontFamily terminalMono18FontFamily(&terminalMono18Font);
-EpdFontFamily terminalMono20FontFamily(&terminalMono20Font);
-EpdFontFamily terminalMono22FontFamily(&terminalMono22Font);
-EpdFontFamily terminalMono24FontFamily(&terminalMono24Font);
-#endif
-
 // Definitions for SilentRestart.h. RTC_NOINIT survives ESP.restart() but not power loss.
 RTC_NOINIT_ATTR uint32_t silentRebootMagic;
 RTC_NOINIT_ATTR uint32_t silentRebootTarget;
@@ -354,17 +333,6 @@ void setupDisplayAndFonts(bool seamless = false) {
   renderer.insertFont(UI_10_FONT_ID, ui10FontFamily);
   renderer.insertFont(UI_12_FONT_ID, ui12FontFamily);
   renderer.insertFont(SMALL_FONT_ID, smallFontFamily);
-#if defined(ENABLE_BLE_TERMINAL) && ENABLE_BLE_TERMINAL
-  renderer.insertFont(TERMINAL_MONO_8_FONT_ID, terminalMono8FontFamily);
-  renderer.insertFont(TERMINAL_MONO_10_FONT_ID, terminalMono10FontFamily);
-  renderer.insertFont(TERMINAL_MONO_12_FONT_ID, terminalMono12FontFamily);
-  renderer.insertFont(TERMINAL_MONO_14_FONT_ID, terminalMono14FontFamily);
-  renderer.insertFont(TERMINAL_MONO_16_FONT_ID, terminalMono16FontFamily);
-  renderer.insertFont(TERMINAL_MONO_18_FONT_ID, terminalMono18FontFamily);
-  renderer.insertFont(TERMINAL_MONO_20_FONT_ID, terminalMono20FontFamily);
-  renderer.insertFont(TERMINAL_MONO_22_FONT_ID, terminalMono22FontFamily);
-  renderer.insertFont(TERMINAL_MONO_24_FONT_ID, terminalMono24FontFamily);
-#endif
 
   // Discover and load SD card fonts
   sdFontSystem.begin(renderer);

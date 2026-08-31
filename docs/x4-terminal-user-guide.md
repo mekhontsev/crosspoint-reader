@@ -15,9 +15,11 @@ installed. Hardware checks covered boot, pairing and reconnect, English and
 Russian frames, automatic scrolling, manual refresh, history paging, and return
 to the home menu.
 
+The SD-loaded plugin bundle lives in
+[`mekhontsev/crosspoint-plugins`](https://github.com/mekhontsev/crosspoint-plugins).
 The companion Android APK and `x4term` Termux helper live in the separate
 [`x4-terminal-bridge`](https://github.com/mekhontsev/x4-terminal-bridge)
-repository. Firmware and APK protocol versions must match.
+repository. Firmware, plugins, and APK must support the same plugin/wire ABIs.
 
 ## Safety prerequisites
 
@@ -46,8 +48,8 @@ table, early boot path, or SD recovery implementation.
 
 ## Installation
 
-1. Download the X4 Terminal X4 Pro `.bin` and `SHA256SUMS.txt` from this fork's
-   GitHub pre-release.
+1. Download the X4 Terminal X4 Pro `.bin`, `SHA256SUMS.txt`, and the
+   `crosspoint-plugins.zip` bundle from their GitHub releases.
 2. Verify the checksum on a computer.
 3. Copy both the X4 Terminal binary and an official X4 Pro rollback binary to
    the root of the reader's SD card. Give them distinct descriptive names.
@@ -55,7 +57,10 @@ table, early boot path, or SD recovery implementation.
 5. Select the X4 Terminal binary, verify the filename again, and confirm.
 6. Do not press Reset, remove the SD card, disconnect power, or operate the
    reader until the update completes and it restarts.
-7. After boot, confirm that **Terminal** appears in the home menu.
+7. Extract the plugin ZIP into the root of the SD card. It must create
+   `/apps/crosspoint-plugins/manager.so` and `terminal.so`.
+8. After boot, confirm that **Plugins** appears in the home menu and contains
+   **Terminal**.
 
 The updater validates the ESP image, target chip/board metadata, image checksum,
 size, and SHA-256 trailer before changing the active OTA image.
@@ -70,7 +75,7 @@ x4term serve
 ```
 
 Choose the tmux pane in the APK, enable the bridge service, and open
-**Terminal** on the reader. On the first
+**Plugins > Terminal** on the reader. On the first
 connection the reader displays a random six-digit passkey; enter it in Android's
 system pairing dialog. The bond is reused later. Re-entering Terminal makes
 Android reconnect and send one current screen rather than replaying the session.
@@ -91,18 +96,23 @@ Android reconnect and send one current screen rather than replaying the session.
 - Hold Confirm for about 700 ms: request the current screen and use a full
   ghost-cleaning e-ink refresh.
 - Page Up: show the previous cached screen or request it from Android.
-- Page Down: show the next cached screen or request it from Android.
+- Page Down: show the next cached screen or request it from Android. On the
+  newest screen, Page Down refreshes Android's current snapshot.
 - Hold Page Down for about 700 ms: jump to the newest screen.
-- Back: leave Terminal and stop its BLE stack.
+- Back: leave Terminal, stop its BLE stack, and return directly to the main
+  menu with **Plugins** selected.
 
 Cached paging and font changes are local. Paging contacts Android only when the
 adjacent screen is not in the four-frame reader cache.
 
 ## Data, refresh, and power behavior
 
-The helper captures only the visible `tmux` viewport. Android stores up to 64
-accepted text screens; the reader stores four 6 KiB screens. Every transferred
-screen is applied atomically only after its length and CRC-32 pass.
+The reader reports its text rows and columns to Android. For an ordinary shell
+pane, the helper may include only enough recent tmux scrollback to fill blank
+rows at the bottom of the reader; alternate-screen programs are captured
+strictly from their current viewport. Android stores up to 64 accepted text
+screens; the reader stores four 6 KiB screens. Every transferred screen is
+applied atomically only after its length and CRC-32 pass.
 
 Android automatically sends rows that were appended or cleanly scrolled. If an
 already published row changes in place, Android treats the screen as animated:
@@ -118,8 +128,9 @@ reliable screen-off operation, set both X4 Terminal Bridge and Termux to
 unrestricted battery use on the phone; the helper also uses Termux:API's wake
 lock command when it is installed.
 
-Leaving Terminal clears the reader's local cache and stops BLE. Re-entering the
-screen causes the companion to reconnect and replay its latest snapshot.
+Leaving Terminal clears the reader's local cache, unloads `terminal.so`, and
+stops BLE. Leaving Plugins also unloads `manager.so`. Re-entering causes the
+companion to reconnect and replay its latest snapshot.
 
 ## Security model
 
@@ -161,6 +172,9 @@ path has been tested on hardware.
   retains up to 64 accepted screens.
 - Animation-only redraws deliberately remain hidden until Confirm or subsequent
   upward progress.
+- The loader accepts a module when plugin ABI 1 matches and its integrity check
+  passes. An actually incompatible plugin can crash the activity and restart
+  the reader. Removing its `.so` from the SD card disables it.
 - Current firmware UI emits only a literal command plus Enter, or Enter alone.
 - OTA checks intentionally point to upstream CrossPoint rather than this fork.
 

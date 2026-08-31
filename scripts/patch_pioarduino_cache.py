@@ -23,10 +23,16 @@ chip_variant = board.get("build.chip_variant", "").lower() or mcu
 framework_libs = Path(platform.get_package_dir("framework-arduinoespressif32-libs"))
 
 # PioArduino's component manager edits this generated file in place when a
-# normal CrossPoint profile excludes the Arduino BLE library. The terminal
-# profile needs the underlying ESP-IDF Bluetooth component, so restore the
-# package-provided full template before the framework builder reads it.
-if env.subst("$PIOENV") == "x4pro-ble-terminal":
+# normal CrossPoint profile excludes the Arduino BLE library. Every X4 Pro
+# plugin-host profile needs the underlying ESP-IDF Bluetooth component, so
+# restore the package-provided full template before the framework builder reads
+# it.
+if env.subst("$PIOENV") in {
+    "x4pro",
+    "x4pro-ble-terminal",
+    "x4pro-gh_release",
+    "x4pro-gh_release_rc",
+}:
     component_build = framework_libs / chip_variant / "pioarduino-build.py"
     component_template = framework_libs / chip_variant / f"pioarduino-build.py.{chip_variant}"
     if component_template.is_file() and (

@@ -17,7 +17,7 @@
 class Activity;    // forward declaration
 class RenderLock;  // forward declaration
 
-enum class HomeMenuItem { NONE, FILE_BROWSER, RECENTS, OPDS_BROWSER, FILE_TRANSFER, TERMINAL, SETTINGS_MENU };
+enum class HomeMenuItem { NONE, FILE_BROWSER, RECENTS, OPDS_BROWSER, FILE_TRANSFER, PLUGINS, SETTINGS_MENU };
 
 /**
  * ActivityManager
@@ -87,8 +87,8 @@ class ActivityManager {
   void goToFileBrowser(std::string path = {});
   void goToRecentBooks();
   void goToBrowser();
-#if defined(ENABLE_BLE_TERMINAL) && ENABLE_BLE_TERMINAL
-  void goToBleTerminal();
+#if defined(ENABLE_PLUGINS) && ENABLE_PLUGINS
+  void goToPlugins();
 #endif
   void goToReader(std::string path, bool allowFastInitialRefresh = false);
   void goToSleep(bool fromTimeout = false);

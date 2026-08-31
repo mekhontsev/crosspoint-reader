@@ -1,13 +1,17 @@
 # X4 Terminal BLE Protocol
 
 This experimental X4 Pro-only protocol displays atomic plain-text snapshots of
-one `tmux` viewport. It is not a terminal emulator, remote shell, file-transfer
+one `tmux` pane. It is not a terminal emulator, remote shell, file-transfer
 protocol, pixel-frame protocol, or transport for raw ANSI output.
 
 ## Frame model
 
-The Termux helper captures and normalizes only the current visible pane. Android
-keeps the newest snapshot, classifies its changes, and sends a complete text
+The reader reports its text geometry after connection and after a font change.
+For a normal shell pane, the Termux helper may prepend only enough recent tmux
+history to fill otherwise blank reader rows. Alternate-screen programs are
+always captured from their current viewport, so unrelated shell history cannot
+appear inside a TUI. Android keeps the newest normalized snapshot, classifies
+its changes, and sends a complete text
 frame as `FRAME_BEGIN`, zero or more `FRAME_DATA` packets, and `FRAME_COMMIT`.
 The reader does not expose or draw staging data. It accepts a frame only when its
 declared UTF-8 byte length and CRC-32 both match at commit.
@@ -53,18 +57,21 @@ leaving the BLE connection intact.
 - Hold Confirm for about 700 ms: request the current snapshot and use a full
   ghost-cleaning e-ink refresh when it arrives.
 - Page Up / Page Down: previous or next frame.
+- Page Down while already on the newest frame: request Current as a manual
+  refresh.
 - Hold Page Down for about 700 ms: return to the current live frame.
 - Keyboard icon: send one literal command followed by Enter. Empty input sends
   Enter only.
 - Refresh icon: touch equivalent of Confirm. A long touch requests Current with
   a full refresh; its corner marker indicates history mode.
 - `-` / `+`: change the local terminal font.
-- Back: leave Terminal and stop the BLE stack.
+- Back: leave Terminal, stop the BLE stack, and return to the main menu.
 
 ## Safety and memory
 
-- The feature is compiled only in `x4pro-ble-terminal` and starts BLE only after
-  the user enters `BleTerminalActivity`.
+- The generic loader and BLE host are compiled in the X4 Pro firmware. The
+  Terminal activity and fonts live in `terminal.so` on SD and start BLE only
+  after the user enters **Plugins > Terminal**.
 - GATT traffic requires authenticated LE Secure Connections with a random
   six-digit passkey. Unauthenticated writes are rejected.
 - Incoming lengths, sequences, flags, UTF-8, control characters, frame IDs, and
@@ -92,9 +99,9 @@ to a 100-200 ms interval with peripheral latency 4 after two quiet seconds.
 | Android to reader | `6f2c8f10-7f7a-4f1e-a2a6-8e8b7b3f6d12` | Authenticated encrypted write with response |
 | Reader to Android | `6f2c8f10-7f7a-4f1e-a2a6-8e8b7b3f6d13` | Authenticated encrypted indication |
 
-Protocol v3 has separate UUIDs from the incompatible stream-based v2 protocol.
-The BLE bond is independent of service UUIDs and can normally be reused after
-both components are upgraded.
+Protocol v4 retains the atomic-frame UUIDs introduced by v3; both are separate
+from the incompatible stream-based v2 protocol. The BLE bond is independent of
+service UUIDs and can normally be reused after both components are upgraded.
 
 ## Packet envelope
 
@@ -106,7 +113,7 @@ packets.
 | Offset | Size | Field |
 |---:|---:|---|
 | 0 | 2 | Magic `XT` |
-| 2 | 1 | Protocol version `3` |
+| 2 | 1 | Protocol version `4` |
 | 3 | 1 | Packet type |
 | 4 | 4 | Connection-local sequence number |
 | 8 | 2 | Payload length |
@@ -181,6 +188,17 @@ history neighbor. If no neighbor exists, Android may return the anchor again.
 Ready is sent after presentation finishes or after a non-presented history cache
 insert. Retry asks Android to resend the same complete frame from a new begin.
 
+### `VIEWPORT` (`8`)
+
+| Payload offset | Size | Field |
+|---:|---:|---|
+| 0 | 2 | Nonzero terminal columns |
+| 2 | 2 | Nonzero terminal rows |
+
+The reader sends this after connecting and whenever its local font size changes.
+Android forwards it to `x4term`. Rows bound the normal-screen history fill;
+columns are currently informational and do not resize the user's tmux pane.
+
 ## Text validation
 
 Display text permits valid Unicode UTF-8, newline, and horizontal tab. NUL,
@@ -190,16 +208,17 @@ forbidden controls and trailing screen padding, and limits a viewport to 6 KiB.
 
 ## Connection lifecycle
 
-1. Android scans by the v3 service UUID and establishes authenticated LE Secure
+1. Android scans by the atomic-frame service UUID and establishes authenticated LE Secure
    Connections.
 2. Android discovers GATT, requests MTU 247, and enables indications.
-3. The reader requests Current.
-4. Android sends one atomic `PRESENT | LATEST | RESET_CACHE` frame.
-5. The reader commits, displays, and sends Ready.
-6. Later safe forward snapshots are sent only while the reader is ready.
-7. An animation-only redraw stays on Android until Current is requested or a
+3. The reader sends Viewport and requests Current.
+4. Android forwards Viewport to the helper.
+5. Android sends one atomic `PRESENT | LATEST | RESET_CACHE` frame.
+6. The reader commits, displays, and sends Ready.
+7. Later safe forward snapshots are sent only while the reader is ready.
+8. An animation-only redraw stays on Android until Current is requested or a
    later capture demonstrates upward progress.
-8. On disconnect both peers discard connection-local sequences and write plans.
+9. On disconnect both peers discard connection-local sequences and write plans.
 
 Write-with-response supplies packet backpressure. Frame status supplies display
 backpressure. Neither peer replays a queue of intermediate snapshots after a

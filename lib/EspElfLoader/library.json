@@ -1,0 +1,17 @@
+{
+  "name": "EspElfLoader",
+  "version": "1.3.3",
+  "description": "Vendored Espressif ELF loader core",
+  "license": "Apache-2.0",
+  "build": {
+    "flags": [
+      "-I include"
+    ],
+    "srcFilter": [
+      "+<esp_elf.c>",
+      "+<esp_elf_adapter.c>",
+      "+<esp_elf_symbol.c>",
+      "+<arch/esp_elf_xtensa.c>"
+    ]
+  }
+}

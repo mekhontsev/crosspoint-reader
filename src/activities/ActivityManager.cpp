@@ -5,6 +5,7 @@
 #include <FsHelpers.h>
 #include <HalDisplay.h>
 #include <HalPowerManager.h>
+#include <I18n.h>
 #include <Memory.h>
 
 #include <algorithm>
@@ -14,8 +15,9 @@
 #include "boot_sleep/BootActivity.h"
 #include "boot_sleep/SleepActivity.h"
 #include "browser/OpdsBookBrowserActivity.h"
-#if defined(ENABLE_BLE_TERMINAL) && ENABLE_BLE_TERMINAL
-#include "ble/BleTerminalActivity.h"
+#if defined(ENABLE_PLUGINS) && ENABLE_PLUGINS
+#include "plugins/PluginErrorActivity.h"
+#include "plugins/PluginLoader.h"
 #endif
 #include "home/CrashActivity.h"
 #include "home/FileBrowserActivity.h"
@@ -204,6 +206,17 @@ void ActivityManager::loop() {
       xTaskNotify(renderTaskHandle, 1, eIncrement);
     }
   }
+
+#if defined(ENABLE_PLUGINS) && ENABLE_PLUGINS
+  const auto activityAlive = [this](const Activity* target) {
+    if (!target) return false;
+    if (currentActivity.get() == target) return true;
+    return std::any_of(stackActivities.begin(), stackActivities.end(),
+                       [target](const auto& activity) { return activity.get() == target; });
+  };
+  if (!activityAlive(PLUGIN_LOADER.childRoot())) PLUGIN_LOADER.unloadChild();
+  if (!activityAlive(PLUGIN_LOADER.managerRoot())) PLUGIN_LOADER.unloadManager();
+#endif
 }
 
 void ActivityManager::exitActivity(const RenderLock& lock) {
@@ -265,11 +278,35 @@ void ActivityManager::goToBrowser() {
   }
 }
 
-#if defined(ENABLE_BLE_TERMINAL) && ENABLE_BLE_TERMINAL
-void ActivityManager::goToBleTerminal() {
-  auto activity = makeUniqueNoThrow<BleTerminalActivity>(renderer, mappedInput);
+#if defined(ENABLE_PLUGINS) && ENABLE_PLUGINS
+void ActivityManager::goToPlugins() {
+  auto activity = PLUGIN_LOADER.createManager(renderer, mappedInput);
   if (!activity) {
-    LOG_ERR("ACT", "OOM: BLE terminal activity");
+    const char* message = tr(STR_PLUGIN_MANAGER_LOAD_FAILED);
+    switch (PLUGIN_LOADER.managerError()) {
+      case PluginLoader::Error::MISSING:
+        message = tr(STR_PLUGIN_MANAGER_MISSING);
+        break;
+      case PluginLoader::Error::INCOMPATIBLE:
+        message = tr(STR_PLUGIN_MANAGER_INCOMPATIBLE);
+        break;
+      case PluginLoader::Error::CORRUPT:
+        message = tr(STR_PLUGIN_MANAGER_CORRUPT);
+        break;
+      case PluginLoader::Error::OUT_OF_MEMORY:
+      case PluginLoader::Error::LOAD_FAILED:
+        message = tr(STR_PLUGIN_MODULE_LOAD_FAILED);
+        break;
+      case PluginLoader::Error::NONE:
+      default:
+        break;
+    }
+    auto errorActivity = makeUniqueNoThrow<PluginErrorActivity>(renderer, mappedInput, message);
+    if (errorActivity) {
+      replaceActivity(std::move(errorActivity));
+    } else {
+      goHome(HomeMenuItem::PLUGINS);
+    }
     return;
   }
   replaceActivity(std::move(activity));
@@ -320,10 +357,6 @@ void ActivityManager::goHome(HomeMenuItem initialMenuItem, bool cleanInitialRefr
       initialMenuItem = HomeMenuItem::OPDS_BROWSER;
     } else if (activityName == "CrossPointWebServer") {
       initialMenuItem = HomeMenuItem::FILE_TRANSFER;
-#if defined(ENABLE_BLE_TERMINAL) && ENABLE_BLE_TERMINAL
-    } else if (activityName == "BleTerminal") {
-      initialMenuItem = HomeMenuItem::TERMINAL;
-#endif
     } else if (activityName == "Settings") {
       initialMenuItem = HomeMenuItem::SETTINGS_MENU;
     }

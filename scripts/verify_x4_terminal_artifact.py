@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reject an X4 Pro artifact that was built without the Terminal feature."""
+"""Reject an X4 Pro artifact that was built without the plugin host."""
 
 from __future__ import annotations
 
@@ -9,12 +9,12 @@ from pathlib import Path
 
 
 ELF_MARKERS = (
-    b"BleTerminalActivity",
+    b"PluginLoader",
     b"BleTerminalTransport",
     b"x4terminal-v",
 )
 BIN_MARKERS = (
-    b"X4 Terminal",
+    b"Plugins",
     b"x4terminal-v",
 )
 
@@ -50,7 +50,7 @@ def main() -> int:
     require_markers(elf, ELF_MARKERS)
     binary_contents = require_markers(binary, BIN_MARKERS)
     digest = hashlib.sha256(binary_contents).hexdigest()
-    print(f"verified X4 Terminal firmware: {binary} ({len(binary_contents)} bytes)")
+    print(f"verified X4 plugin-host firmware: {binary} ({len(binary_contents)} bytes)")
     print(f"sha256: {digest}")
     return 0
 

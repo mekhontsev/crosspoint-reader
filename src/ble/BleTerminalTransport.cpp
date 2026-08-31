@@ -1,6 +1,6 @@
 #include "BleTerminalTransport.h"
 
-#if defined(ENABLE_BLE_TERMINAL) && ENABLE_BLE_TERMINAL
+#if defined(ENABLE_PLUGIN_BLE_HOST) && ENABLE_PLUGIN_BLE_HOST
 
 #include <Arduino.h>
 #include <Logging.h>
@@ -269,6 +269,13 @@ bool BleTerminalTransport::sendFrameStatus(const uint32_t frameId, const FrameSt
   const size_t length = encodeFrameStatusPacket(frameId, status, outgoingSequence_, packet.data(), packet.size());
   if (length == 0) return false;
   return sendPacket(packet.data(), length, "frame status");
+}
+
+bool BleTerminalTransport::sendViewport(const uint16_t columns, const uint16_t rows) {
+  std::array<uint8_t, PACKET_HEADER_BYTES + 4> packet{};
+  const size_t length = encodeViewportPacket(columns, rows, outgoingSequence_, packet.data(), packet.size());
+  if (length == 0) return false;
+  return sendPacket(packet.data(), length, "viewport geometry");
 }
 
 bool BleTerminalTransport::readyToSend() const {

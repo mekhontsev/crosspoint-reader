@@ -12,15 +12,6 @@
 #define UI_10_FONT_ID (982653217)
 #define UI_12_FONT_ID (-22104740)
 #define SMALL_FONT_ID (674098198)
-#define TERMINAL_MONO_8_FONT_ID (1159244878)
-#define TERMINAL_MONO_10_FONT_ID (-678460070)
-#define TERMINAL_MONO_12_FONT_ID (-365074266)
-#define TERMINAL_MONO_14_FONT_ID (-795326088)
-#define TERMINAL_MONO_16_FONT_ID (2014276361)
-#define TERMINAL_MONO_18_FONT_ID (-1917429270)
-#define TERMINAL_MONO_20_FONT_ID (-1095500891)
-#define TERMINAL_MONO_22_FONT_ID (-1883589883)
-#define TERMINAL_MONO_24_FONT_ID (-81583622)
 
 // Font ID 0 is reserved as the "not found" sentinel.
 // Guard against any hash accidentally producing 0.
@@ -35,12 +26,3 @@ static_assert(NOTOSANS_18_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(UI_10_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(UI_12_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(SMALL_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(TERMINAL_MONO_8_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(TERMINAL_MONO_10_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(TERMINAL_MONO_12_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(TERMINAL_MONO_14_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(TERMINAL_MONO_16_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(TERMINAL_MONO_18_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(TERMINAL_MONO_20_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(TERMINAL_MONO_22_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(TERMINAL_MONO_24_FONT_ID != 0, "Font ID collision with sentinel");

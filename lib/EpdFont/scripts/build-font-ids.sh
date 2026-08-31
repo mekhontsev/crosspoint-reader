@@ -100,12 +100,6 @@ ruby -rdigest -e 'puts [
 ].map{|f| Digest::SHA256.hexdigest(File.read(f)).to_i(16) }.sum % (2 ** 32) - (2 ** 31)'
 ))"
 
-for size in 8 10 12 14 16 18 20 22 24; do
-  value="$(ruby -rdigest -e 'puts Digest::SHA256.hexdigest(File.read(ARGV[0])).to_i(16) % (2 ** 32) - (2 ** 31)' \
-    "./terminalmono_${size}_regular.h")"
-  echo "#define TERMINAL_MONO_${size}_FONT_ID (${value})"
-done
-
 echo ""
 cat <<'EOF'
 // Font ID 0 is reserved as the "not found" sentinel.
@@ -121,13 +115,4 @@ static_assert(NOTOSANS_18_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(UI_10_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(UI_12_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(SMALL_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(TERMINAL_MONO_8_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(TERMINAL_MONO_10_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(TERMINAL_MONO_12_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(TERMINAL_MONO_14_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(TERMINAL_MONO_16_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(TERMINAL_MONO_18_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(TERMINAL_MONO_20_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(TERMINAL_MONO_22_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(TERMINAL_MONO_24_FONT_ID != 0, "Font ID collision with sentinel");
 EOF

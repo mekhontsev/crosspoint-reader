@@ -9,10 +9,10 @@ normative for firmware and bridge implementations.
 ## Implemented boundary
 
 ```text
-visible tmux viewport
+tmux snapshot sized for the reader viewport
   -> x4term helper (normalized snapshots over authenticated loopback IPC)
   -> Android Java foreground service (history, animation gate, BLE central)
-  -> X4 Pro Terminal activity (atomic frame cache and e-ink rendering)
+  -> X4 Pro SD-loaded Terminal plugin (atomic frame cache and e-ink rendering)
 ```
 
 The helper uses Python's standard library and `tmux`; it does no Bluetooth
@@ -20,10 +20,12 @@ work. The APK uses Java and Android's platform Bluetooth APIs. The reader's
 normal menus, book reader, storage, and update code are outside this feature.
 
 The bridge sends bounded complete screen frames, not terminal output events or
-scrollback. Android suppresses in-place animation replacements, retains the
-newest snapshot for an explicit reader refresh, and keeps a bounded 64-frame
-history. The reader keeps four fixed-size frames and requests missing adjacent
-frames from Android.
+a scrollback dump. The reader reports its geometry; an ordinary shell capture
+may use just enough preceding tmux rows to avoid a partially blank reader page,
+while alternate-screen programs remain viewport-only. Android suppresses
+in-place animation replacements, retains the newest snapshot for an explicit
+reader refresh, and keeps a bounded 64-frame history. The reader keeps four
+fixed-size frames and requests missing adjacent frames from Android.
 
 ## Safety properties
 

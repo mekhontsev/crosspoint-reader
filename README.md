@@ -6,11 +6,12 @@
 > official CrossPoint release and is not supported by the upstream CrossPoint
 > project or Xteink. Do not install it on the X4, X3, or any other board.
 >
-> The reader firmware has been tested on one X4 Pro. The Android companion is
-> still under development; the current end-to-end client is the Windows smoke
-> test. Read the [X4 Terminal user guide](docs/x4-terminal-user-guide.md) and its
-> recovery warnings before installing. Developers implementing the Android side
-> should start with the [Android handoff](docs/x4-terminal-android-handoff.md).
+> The reader firmware and Android companion have been exercised end to end on
+> one X4 Pro. The firmware contains a generic **Plugins** host; the menu manager,
+> Terminal activity, and fonts are independently built SD modules from
+> [`crosspoint-plugins`](https://github.com/mekhontsev/crosspoint-plugins).
+> Read the [X4 Terminal user guide](docs/x4-terminal-user-guide.md) and its
+> recovery warnings before installing.
 
 [![Fund contributors](https://img.shields.io/badge/%F0%9F%91%91_Fund_contributors-royalty.dev-BB953A?style=for-the-badge&labelColor=1a1a1a)](https://app.royalty.dev/crosspoint-reader/crosspoint-reader)
 

@@ -1,6 +1,6 @@
 #pragma once
 
-#if defined(ENABLE_BLE_TERMINAL) && ENABLE_BLE_TERMINAL
+#if defined(ENABLE_PLUGIN_BLE_HOST) && ENABLE_PLUGIN_BLE_HOST
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
@@ -37,6 +37,7 @@ class BleTerminalTransport final {
   bool sendCommand(const std::string& command);
   bool sendFrameRequest(FrameRequest request, uint32_t anchorFrameId);
   bool sendFrameStatus(uint32_t frameId, FrameStatus status);
+  bool sendViewport(uint16_t columns, uint16_t rows);
   bool readyToSend() const;
   size_t maxCommandBytes() const;
   void setTransferActive(bool active);
@@ -89,7 +90,7 @@ class BleTerminalTransport final {
 
 // NimBLE finishes its FreeRTOS host task asynchronously after
 // nimble_port_stop(). Keep the transport alive across activity destruction so
-// a late host-task epilogue can never touch a freed BleTerminalActivity.
+// a late host-task epilogue can never touch a freed plugin activity.
 BleTerminalTransport& sharedTransport();
 
 }  // namespace ble_terminal

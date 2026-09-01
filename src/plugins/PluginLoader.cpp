@@ -15,6 +15,7 @@
 #include <cstring>
 #include <memory>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 #include "Memory.h"
@@ -34,6 +35,25 @@ constexpr size_t TRAILER_ABI_OFFSET = 12;
 constexpr size_t TRAILER_ELF_SIZE_OFFSET = 16;
 constexpr size_t TRAILER_HASH_OFFSET = 20;
 constexpr size_t MODULE_NAME_MAX = 32;
+
+static_assert(std::is_standard_layout_v<crosspoint_plugin::PluginDescriptorV3>);
+static_assert(std::is_trivially_copyable_v<crosspoint_plugin::PluginDescriptorV3>);
+static_assert(sizeof(crosspoint_plugin::PluginDescriptorV3) ==
+              crosspoint_plugin::MODULE_TITLE_BYTES + crosspoint_plugin::MODULE_VERSION_BYTES + 4);
+
+struct PluginInstallState {
+  HalFile file;
+  mbedtls_sha256_context sha{};
+  std::array<uint8_t, crosspoint_plugin::SHA256_BYTES> expectedSha{};
+  std::array<char, 128> path{};
+  std::array<char, crosspoint_plugin::MODULE_NAME_BYTES> module{};
+  uint32_t expectedBytes = 0;
+  uint32_t writtenBytes = 0;
+  bool shaInitialized = false;
+  bool active = false;
+};
+
+PluginInstallState pluginInstall;
 
 uint32_t readLe32(const uint8_t* data) {
   return static_cast<uint32_t>(data[0]) | (static_cast<uint32_t>(data[1]) << 8U) |
@@ -88,11 +108,127 @@ bool validModuleName(const char* name) {
   return length > 0;
 }
 
+void clearPluginInstall() {
+  if (pluginInstall.file) pluginInstall.file.close();
+  if (pluginInstall.shaInitialized) mbedtls_sha256_free(&pluginInstall.sha);
+  pluginInstall = {};
+}
+
 struct PsramDeleter {
   void operator()(uint8_t* pointer) const {
     if (pointer) heap_caps_free(pointer);
   }
 };
+
+struct ValidatedModuleImage {
+  std::unique_ptr<uint8_t, PsramDeleter> payload;
+  size_t elfSize = 0;
+};
+
+bool readValidatedModuleImage(const char* path, ValidatedModuleImage& image, PluginLoader::Error& error) {
+  HalFile file;
+  if (!Storage.openFileForRead("PLUGIN", path, file) || !file) {
+    LOG_ERR("PLUGIN", "Missing module: %s", path);
+    error = PluginLoader::Error::MISSING;
+    return false;
+  }
+
+  const size_t fileSize = file.fileSize();
+  if (fileSize <= crosspoint_plugin::TRAILER_BYTES ||
+      fileSize > crosspoint_plugin::MAX_ELF_BYTES + crosspoint_plugin::TRAILER_BYTES) {
+    LOG_ERR("PLUGIN", "Invalid module size: %u", static_cast<unsigned>(fileSize));
+    error = PluginLoader::Error::CORRUPT;
+    return false;
+  }
+
+  std::array<uint8_t, crosspoint_plugin::TRAILER_BYTES> trailer{};
+  if (!file.seek(fileSize - trailer.size()) || file.read(trailer.data(), trailer.size()) != trailer.size()) {
+    LOG_ERR("PLUGIN", "Unable to read module trailer");
+    error = PluginLoader::Error::CORRUPT;
+    return false;
+  }
+
+  const size_t elfSize = readLe32(trailer.data() + TRAILER_ELF_SIZE_OFFSET);
+  if (std::memcmp(trailer.data(), crosspoint_plugin::TRAILER_MAGIC, 8) != 0 ||
+      readLe32(trailer.data() + TRAILER_FORMAT_OFFSET) != crosspoint_plugin::TRAILER_FORMAT ||
+      readLe32(trailer.data() + TRAILER_ABI_OFFSET) != crosspoint_plugin::ABI_VERSION ||
+      elfSize != fileSize - trailer.size()) {
+    LOG_ERR("PLUGIN", "Module is incompatible with this firmware: %s", path);
+    error = PluginLoader::Error::INCOMPATIBLE;
+    return false;
+  }
+
+  image.payload.reset(static_cast<uint8_t*>(heap_caps_malloc(elfSize, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)));
+  if (!image.payload) {
+    LOG_ERR("PLUGIN", "OOM: module payload (%u bytes)", static_cast<unsigned>(elfSize));
+    error = PluginLoader::Error::OUT_OF_MEMORY;
+    return false;
+  }
+
+  if (!file.seek(0)) {
+    error = PluginLoader::Error::CORRUPT;
+    return false;
+  }
+  mbedtls_sha256_context sha{};
+  mbedtls_sha256_init(&sha);
+  mbedtls_sha256_starts(&sha, 0);
+  size_t position = 0;
+  while (position < elfSize) {
+    const size_t chunk = std::min<size_t>(4096, elfSize - position);
+    const int count = file.read(image.payload.get() + position, chunk);
+    if (count != static_cast<int>(chunk)) {
+      mbedtls_sha256_free(&sha);
+      LOG_ERR("PLUGIN", "Short module read at %u", static_cast<unsigned>(position));
+      error = PluginLoader::Error::CORRUPT;
+      return false;
+    }
+    mbedtls_sha256_update(&sha, image.payload.get() + position, chunk);
+    position += chunk;
+  }
+  std::array<uint8_t, crosspoint_plugin::SHA256_BYTES> digest{};
+  mbedtls_sha256_finish(&sha, digest.data());
+  mbedtls_sha256_free(&sha);
+  if (std::memcmp(digest.data(), trailer.data() + TRAILER_HASH_OFFSET, digest.size()) != 0 ||
+      !validateElfImage(image.payload.get(), elfSize)) {
+    LOG_ERR("PLUGIN", "Module integrity validation failed: %s", path);
+    error = PluginLoader::Error::CORRUPT;
+    return false;
+  }
+
+  image.elfSize = elfSize;
+  error = PluginLoader::Error::NONE;
+  return true;
+}
+
+bool readPluginMetadata(const ValidatedModuleImage& image, crosspoint_plugin::PluginDescriptorV3& descriptor) {
+  if (!image.payload || image.elfSize < sizeof(elf32_hdr_t)) return false;
+  elf32_hdr_t header{};
+  std::memcpy(&header, image.payload.get(), sizeof(header));
+
+  elf32_shdr_t stringSection{};
+  std::memcpy(&stringSection,
+              image.payload.get() + header.shoff + static_cast<size_t>(header.shstrndx) * sizeof(elf32_shdr_t),
+              sizeof(stringSection));
+  if (!rangeWithin(stringSection.offset, stringSection.size, image.elfSize)) return false;
+
+  const char* names = reinterpret_cast<const char*>(image.payload.get() + stringSection.offset);
+  for (uint16_t index = 0; index < header.shnum; ++index) {
+    elf32_shdr_t section{};
+    std::memcpy(&section, image.payload.get() + header.shoff + static_cast<size_t>(index) * sizeof(section),
+                sizeof(section));
+    if (section.name >= stringSection.size) continue;
+    const char* name = names + section.name;
+    if (!std::memchr(name, '\0', stringSection.size - section.name) ||
+        std::strcmp(name, crosspoint_plugin::METADATA_SECTION) != 0) {
+      continue;
+    }
+    if (section.size != sizeof(descriptor) || !rangeWithin(section.offset, section.size, image.elfSize)) return false;
+    std::memcpy(&descriptor, image.payload.get() + section.offset, sizeof(descriptor));
+    return descriptor.title[0] != '\0' && std::memchr(descriptor.title, '\0', sizeof(descriptor.title)) &&
+           std::memchr(descriptor.version, '\0', sizeof(descriptor.version));
+  }
+  return false;
+}
 
 enum class PluginKeyboardResultState : uint8_t { NONE, OPEN, COMPLETED, CANCELLED };
 
@@ -145,79 +281,8 @@ PluginLoader& PluginLoader::getInstance() {
 bool PluginLoader::load(Module& module, const char* path) {
   if (module.loaded) return true;
   module.lastError = Error::NONE;
-
-  HalFile file;
-  if (!Storage.openFileForRead("PLUGIN", path, file) || !file) {
-    LOG_ERR("PLUGIN", "Missing module: %s", path);
-    module.lastError = Error::MISSING;
-    return false;
-  }
-
-  const size_t fileSize = file.fileSize();
-  if (fileSize <= crosspoint_plugin::TRAILER_BYTES ||
-      fileSize > crosspoint_plugin::MAX_ELF_BYTES + crosspoint_plugin::TRAILER_BYTES) {
-    LOG_ERR("PLUGIN", "Invalid module size: %u", static_cast<unsigned>(fileSize));
-    module.lastError = Error::CORRUPT;
-    return false;
-  }
-
-  std::array<uint8_t, crosspoint_plugin::TRAILER_BYTES> trailer{};
-  if (!file.seek(fileSize - trailer.size()) || file.read(trailer.data(), trailer.size()) != trailer.size()) {
-    LOG_ERR("PLUGIN", "Unable to read module trailer");
-    module.lastError = Error::CORRUPT;
-    return false;
-  }
-
-  const size_t elfSize = readLe32(trailer.data() + TRAILER_ELF_SIZE_OFFSET);
-  if (std::memcmp(trailer.data(), crosspoint_plugin::TRAILER_MAGIC, 8) != 0 ||
-      readLe32(trailer.data() + TRAILER_FORMAT_OFFSET) != crosspoint_plugin::TRAILER_FORMAT ||
-      readLe32(trailer.data() + TRAILER_ABI_OFFSET) != crosspoint_plugin::ABI_VERSION ||
-      elfSize != fileSize - trailer.size()) {
-    LOG_ERR("PLUGIN", "Module is incompatible with this firmware: %s", path);
-    module.lastError = Error::INCOMPATIBLE;
-    return false;
-  }
-
-  // Relocation needs the complete ELF image at once. This cold-path buffer is
-  // explicitly allocated in the X4 Pro's PSRAM and released immediately after
-  // esp_elf_relocate has copied the loadable sections into executable PSRAM.
-  std::unique_ptr<uint8_t, PsramDeleter> payload(
-      static_cast<uint8_t*>(heap_caps_malloc(elfSize, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)));
-  if (!payload) {
-    LOG_ERR("PLUGIN", "OOM: module payload (%u bytes)", static_cast<unsigned>(elfSize));
-    module.lastError = Error::OUT_OF_MEMORY;
-    return false;
-  }
-
-  if (!file.seek(0)) {
-    module.lastError = Error::CORRUPT;
-    return false;
-  }
-  mbedtls_sha256_context sha{};
-  mbedtls_sha256_init(&sha);
-  mbedtls_sha256_starts(&sha, 0);
-  size_t position = 0;
-  while (position < elfSize) {
-    const size_t chunk = std::min<size_t>(4096, elfSize - position);
-    const int count = file.read(payload.get() + position, chunk);
-    if (count != static_cast<int>(chunk)) {
-      mbedtls_sha256_free(&sha);
-      LOG_ERR("PLUGIN", "Short module read at %u", static_cast<unsigned>(position));
-      module.lastError = Error::CORRUPT;
-      return false;
-    }
-    mbedtls_sha256_update(&sha, payload.get() + position, chunk);
-    position += chunk;
-  }
-  std::array<uint8_t, crosspoint_plugin::SHA256_BYTES> digest{};
-  mbedtls_sha256_finish(&sha, digest.data());
-  mbedtls_sha256_free(&sha);
-  if (std::memcmp(digest.data(), trailer.data() + TRAILER_HASH_OFFSET, digest.size()) != 0 ||
-      !validateElfImage(payload.get(), elfSize)) {
-    LOG_ERR("PLUGIN", "Module integrity validation failed: %s", path);
-    module.lastError = Error::CORRUPT;
-    return false;
-  }
+  ValidatedModuleImage image;
+  if (!readValidatedModuleImage(path, image, module.lastError)) return false;
 
   elf_set_symbol_resolver(resolvePluginSymbol);
   if (esp_elf_init(&module.elf) != 0) {
@@ -225,14 +290,14 @@ bool PluginLoader::load(Module& module, const char* path) {
     return false;
   }
   module.initialized = true;
-  if (esp_elf_relocate(&module.elf, payload.get()) != 0) {
+  if (esp_elf_relocate(&module.elf, image.payload.get()) != 0) {
     LOG_ERR("PLUGIN", "ELF relocation failed: %s", path);
     unload(module);
     module.lastError = Error::LOAD_FAILED;
     return false;
   }
   module.loaded = true;
-  LOG_INF("PLUGIN", "Loaded %u-byte module into PSRAM: %s", static_cast<unsigned>(elfSize), path);
+  LOG_INF("PLUGIN", "Loaded %u-byte module into PSRAM: %s", static_cast<unsigned>(image.elfSize), path);
   return true;
 }
 
@@ -285,6 +350,107 @@ Activity* PluginLoader::createChild(const char* moduleName, GfxRenderer& rendere
   auto activity = create(child_, path.data(), renderer, mappedInput);
   return activity.release();
 }
+
+bool PluginLoader::describeChild(const char* moduleName, crosspoint_plugin::PluginInfoV3* info) {
+  if (!info || !validModuleName(moduleName) || child_.rootActivity || child_.loaded) return false;
+  std::array<char, 128> path{};
+  const int pathLength = std::snprintf(path.data(), path.size(), "%s/%s.so", crosspoint_plugin::ROOT_PATH, moduleName);
+  if (pathLength <= 0 || static_cast<size_t>(pathLength) >= path.size()) return false;
+
+  ValidatedModuleImage image;
+  Error error = Error::NONE;
+  if (!readValidatedModuleImage(path.data(), image, error)) return false;
+  crosspoint_plugin::PluginDescriptorV3 descriptor{};
+  if (!readPluginMetadata(image, descriptor)) {
+    LOG_ERR("PLUGIN", "Metadata section is missing or invalid: %s", path.data());
+    return false;
+  }
+
+  *info = {};
+  std::snprintf(info->module, sizeof(info->module), "%s", moduleName);
+  info->descriptor = descriptor;
+  return true;
+}
+
+size_t PluginLoader::listChildren(crosspoint_plugin::PluginInfoV3* modules, const size_t capacity) {
+  if (!modules || capacity == 0 || child_.rootActivity || child_.loaded) return 0;
+  HalFile directory = Storage.open(crosspoint_plugin::ROOT_PATH);
+  if (!directory || !directory.isDirectory()) return 0;
+
+  size_t count = 0;
+  for (HalFile file = directory.openNextFile(); file && count < capacity; file = directory.openNextFile()) {
+    if (file.isDirectory()) continue;
+    std::array<char, 96> filename{};
+    const size_t length = file.getName(filename.data(), filename.size());
+    if (length == 0 || length >= filename.size()) continue;
+    filename[length] = '\0';
+    if (length <= 3 || std::strcmp(filename.data() + length - 3, ".so") != 0) continue;
+    filename[length - 3] = '\0';
+    if (std::strcmp(filename.data(), "manager") == 0 || !validModuleName(filename.data())) continue;
+    if (describeChild(filename.data(), &modules[count])) count++;
+  }
+  return count;
+}
+
+bool PluginLoader::beginInstall(const char* moduleName, const uint32_t bytes,
+                                const uint8_t sha256[crosspoint_plugin::SHA256_BYTES]) {
+  if (pluginInstall.active || child_.rootActivity || child_.loaded || !validModuleName(moduleName) ||
+      std::strcmp(moduleName, "manager") == 0 || !sha256 || bytes <= crosspoint_plugin::TRAILER_BYTES ||
+      bytes > crosspoint_plugin::MAX_ELF_BYTES + crosspoint_plugin::TRAILER_BYTES) {
+    return false;
+  }
+  if (!Storage.ensureDirectoryExists(crosspoint_plugin::ROOT_PATH)) return false;
+
+  const int pathLength = std::snprintf(pluginInstall.path.data(), pluginInstall.path.size(), "%s/%s.so",
+                                       crosspoint_plugin::ROOT_PATH, moduleName);
+  if (pathLength <= 0 || static_cast<size_t>(pathLength) >= pluginInstall.path.size() ||
+      !Storage.openFileForWrite("PLUGIN", pluginInstall.path.data(), pluginInstall.file)) {
+    clearPluginInstall();
+    return false;
+  }
+  std::snprintf(pluginInstall.module.data(), pluginInstall.module.size(), "%s", moduleName);
+  std::memcpy(pluginInstall.expectedSha.data(), sha256, pluginInstall.expectedSha.size());
+  pluginInstall.expectedBytes = bytes;
+  mbedtls_sha256_init(&pluginInstall.sha);
+  pluginInstall.shaInitialized = true;
+  if (mbedtls_sha256_starts(&pluginInstall.sha, 0) != 0) {
+    clearPluginInstall();
+    return false;
+  }
+  pluginInstall.active = true;
+  return true;
+}
+
+bool PluginLoader::writeInstall(const uint32_t offset, const uint8_t* data, const size_t length) {
+  if (!pluginInstall.active || !data || length == 0 || offset != pluginInstall.writtenBytes ||
+      length > pluginInstall.expectedBytes - pluginInstall.writtenBytes ||
+      pluginInstall.file.write(data, length) != length ||
+      mbedtls_sha256_update(&pluginInstall.sha, data, length) != 0) {
+    return false;
+  }
+  pluginInstall.writtenBytes += length;
+  return true;
+}
+
+bool PluginLoader::finishInstall() {
+  if (!pluginInstall.active || pluginInstall.writtenBytes != pluginInstall.expectedBytes) return false;
+
+  std::array<uint8_t, crosspoint_plugin::SHA256_BYTES> actualSha{};
+  const bool digestOk = mbedtls_sha256_finish(&pluginInstall.sha, actualSha.data()) == 0 &&
+                        std::memcmp(actualSha.data(), pluginInstall.expectedSha.data(), actualSha.size()) == 0;
+  mbedtls_sha256_free(&pluginInstall.sha);
+  pluginInstall.shaInitialized = false;
+  pluginInstall.file.flush();
+  pluginInstall.file.close();
+  pluginInstall.active = false;
+
+  crosspoint_plugin::PluginInfoV3 info{};
+  const bool validModule = digestOk && describeChild(pluginInstall.module.data(), &info);
+  clearPluginInstall();
+  return validModule;
+}
+
+void PluginLoader::abortInstall() { clearPluginInstall(); }
 
 void PluginLoader::unload(Module& module) {
   if (module.initialized) esp_elf_deinit(&module.elf);
@@ -352,6 +518,32 @@ extern "C" uint8_t crosspoint_plugin_take_text_keyboard_result_v2(char* text, co
 
 extern "C" uint8_t crosspoint_plugin_send_terminal_command_v2(const char* text, const size_t length) {
   return ble_terminal::sharedTransport().sendCommand(text, length);
+}
+
+extern "C" size_t crosspoint_plugin_list_v3(crosspoint_plugin::PluginInfoV3* modules, const size_t capacity) {
+  return PLUGIN_LOADER.listChildren(modules, std::min(capacity, crosspoint_plugin::MAX_LISTED_MODULES));
+}
+
+extern "C" uint8_t crosspoint_plugin_install_begin_v3(const char* module, const uint32_t bytes,
+                                                      const uint8_t sha256[crosspoint_plugin::SHA256_BYTES]) {
+  return PLUGIN_LOADER.beginInstall(module, bytes, sha256);
+}
+
+extern "C" uint8_t crosspoint_plugin_install_write_v3(const uint32_t offset, const uint8_t* data, const size_t length) {
+  return PLUGIN_LOADER.writeInstall(offset, data, length);
+}
+
+extern "C" uint8_t crosspoint_plugin_install_finish_v3() { return PLUGIN_LOADER.finishInstall(); }
+
+extern "C" void crosspoint_plugin_install_abort_v3() { PLUGIN_LOADER.abortInstall(); }
+
+extern "C" uint8_t crosspoint_plugin_send_update_hello_v3() {
+  return ble_terminal::sharedTransport().sendPluginUpdateHello(crosspoint_plugin::ABI_VERSION);
+}
+
+extern "C" uint8_t crosspoint_plugin_send_update_status_v3(const crosspoint_plugin::UpdateStatusV3 status,
+                                                           const uint32_t value) {
+  return ble_terminal::sharedTransport().sendPluginUpdateStatus(static_cast<uint8_t>(status), value);
 }
 
 #endif

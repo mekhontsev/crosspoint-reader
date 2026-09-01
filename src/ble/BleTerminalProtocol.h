@@ -8,7 +8,9 @@ namespace ble_terminal {
 constexpr size_t PACKET_HEADER_BYTES = 10;
 constexpr size_t MAX_PACKET_BYTES = 244;
 constexpr size_t MAX_COMMAND_BYTES = MAX_PACKET_BYTES - PACKET_HEADER_BYTES;
+constexpr size_t MAX_UPDATE_DATA_BYTES = MAX_PACKET_BYTES - PACKET_HEADER_BYTES - sizeof(uint32_t);
 constexpr size_t MAX_FRAME_BYTES = 6 * 1024;
+constexpr uint8_t PROTOCOL_VERSION = 4;
 
 enum class PacketType : uint8_t {
   FRAME_BEGIN = 1,
@@ -19,6 +21,11 @@ enum class PacketType : uint8_t {
   FRAME_REQUEST = 6,
   FRAME_STATUS = 7,
   VIEWPORT = 8,
+  PLUGIN_UPDATE_HELLO = 9,
+  PLUGIN_UPDATE_BEGIN = 10,
+  PLUGIN_UPDATE_DATA = 11,
+  PLUGIN_UPDATE_END = 12,
+  PLUGIN_UPDATE_STATUS = 13,
 };
 
 enum class Action : uint8_t {
@@ -30,6 +37,13 @@ enum class Action : uint8_t {
 
 enum class FrameRequest : uint8_t { CURRENT = 0, PREVIOUS = 1, NEXT = 2 };
 enum class FrameStatus : uint8_t { READY = 0, RETRY = 1 };
+
+struct PacketView {
+  PacketType type = PacketType::FRAME_BEGIN;
+  uint32_t sequence = 0;
+  const uint8_t* payload = nullptr;
+  size_t payloadLength = 0;
+};
 
 constexpr uint8_t FRAME_FLAG_LATEST = 1U;
 constexpr uint8_t FRAME_FLAG_PRESENT = 1U << 1U;
@@ -54,6 +68,7 @@ enum class AcceptResult : uint8_t {
 
 bool isValidDisplayText(const uint8_t* data, size_t length);
 bool isValidCommandText(const uint8_t* data, size_t length);
+bool decodePacket(const uint8_t* packet, size_t length, PacketView& view);
 size_t encodeActionPacket(Action action, uint32_t sequence, uint8_t* output, size_t capacity);
 size_t encodeCommandPacket(const uint8_t* command, size_t commandLength, uint32_t sequence, uint8_t* output,
                            size_t capacity);
@@ -62,6 +77,10 @@ size_t encodeFrameRequestPacket(FrameRequest request, uint32_t anchorFrameId, ui
 size_t encodeFrameStatusPacket(uint32_t frameId, FrameStatus status, uint32_t sequence, uint8_t* output,
                                size_t capacity);
 size_t encodeViewportPacket(uint16_t columns, uint16_t rows, uint32_t sequence, uint8_t* output, size_t capacity);
+size_t encodePluginUpdateHelloPacket(uint32_t pluginAbi, uint16_t maxDataBytes, uint32_t sequence, uint8_t* output,
+                                     size_t capacity);
+size_t encodePluginUpdateStatusPacket(uint8_t status, uint32_t value, uint32_t sequence, uint8_t* output,
+                                      size_t capacity);
 
 class TextFrameReceiver final {
  public:

@@ -7,7 +7,6 @@ namespace {
 
 constexpr uint8_t MAGIC_0 = 'X';
 constexpr uint8_t MAGIC_1 = 'T';
-constexpr uint8_t PROTOCOL_VERSION = 4;
 constexpr size_t FRAME_BEGIN_PAYLOAD_BYTES = 11;
 constexpr size_t FRAME_ID_PAYLOAD_BYTES = sizeof(uint32_t);
 constexpr size_t FRAME_CONTROL_PAYLOAD_BYTES = sizeof(uint32_t) + sizeof(uint8_t);
@@ -87,6 +86,20 @@ size_t encodePacket(const PacketType type, const uint8_t* payload, const size_t 
 }
 
 }  // namespace
+
+bool decodePacket(const uint8_t* packet, const size_t length, PacketView& view) {
+  if (!packet || length < PACKET_HEADER_BYTES || length > MAX_PACKET_BYTES || packet[0] != MAGIC_0 ||
+      packet[1] != MAGIC_1 || packet[2] != PROTOCOL_VERSION) {
+    return false;
+  }
+  const size_t payloadLength = readLe16(packet + 8);
+  if (payloadLength != length - PACKET_HEADER_BYTES) return false;
+  view.type = static_cast<PacketType>(packet[3]);
+  view.sequence = readLe32(packet + 4);
+  view.payload = packet + PACKET_HEADER_BYTES;
+  view.payloadLength = payloadLength;
+  return true;
+}
 
 bool isValidDisplayText(const uint8_t* data, const size_t length) {
   if (!data && length != 0) return false;
@@ -179,6 +192,24 @@ size_t encodeViewportPacket(const uint16_t columns, const uint16_t rows, const u
   return encodePacket(PacketType::VIEWPORT, payload, sizeof(payload), sequence, output, capacity);
 }
 
+size_t encodePluginUpdateHelloPacket(const uint32_t pluginAbi, const uint16_t maxDataBytes, const uint32_t sequence,
+                                     uint8_t* output, const size_t capacity) {
+  if (pluginAbi == 0 || maxDataBytes == 0 || maxDataBytes > MAX_UPDATE_DATA_BYTES) return 0;
+  uint8_t payload[sizeof(uint32_t) + sizeof(uint16_t)]{};
+  writeLe32(payload, pluginAbi);
+  writeLe16(payload + sizeof(uint32_t), maxDataBytes);
+  return encodePacket(PacketType::PLUGIN_UPDATE_HELLO, payload, sizeof(payload), sequence, output, capacity);
+}
+
+size_t encodePluginUpdateStatusPacket(const uint8_t status, const uint32_t value, const uint32_t sequence,
+                                      uint8_t* output, const size_t capacity) {
+  if (status == 0) return 0;
+  uint8_t payload[sizeof(uint8_t) + sizeof(uint32_t)]{};
+  payload[0] = status;
+  writeLe32(payload + sizeof(uint8_t), value);
+  return encodePacket(PacketType::PLUGIN_UPDATE_STATUS, payload, sizeof(payload), sequence, output, capacity);
+}
+
 TextFrameReceiver::TextFrameReceiver(char* buffer, const size_t capacity) : buffer_(buffer), capacity_(capacity) {
   if (buffer_ && capacity_ > 0) buffer_[0] = '\0';
 }
@@ -204,25 +235,26 @@ AcceptResult TextFrameReceiver::accept(const uint8_t* packet, const size_t lengt
   }
   if (packet[0] != MAGIC_0 || packet[1] != MAGIC_1) return AcceptResult::INVALID_PACKET;
   if (packet[2] != PROTOCOL_VERSION) return AcceptResult::UNSUPPORTED_VERSION;
+  PacketView view{};
+  if (!decodePacket(packet, length, view)) return AcceptResult::INVALID_PACKET;
 
-  const auto type = static_cast<PacketType>(packet[3]);
-  const uint32_t sequence = readLe32(packet + 4);
-  const size_t payloadLength = readLe16(packet + 8);
-  if (payloadLength != length - PACKET_HEADER_BYTES) return AcceptResult::INVALID_PACKET;
-  const uint8_t* payload = packet + PACKET_HEADER_BYTES;
-
-  switch (type) {
+  switch (view.type) {
     case PacketType::FRAME_BEGIN:
-      return acceptBegin(sequence, payload, payloadLength);
+      return acceptBegin(view.sequence, view.payload, view.payloadLength);
     case PacketType::FRAME_DATA:
-      return acceptData(sequence, payload, payloadLength);
+      return acceptData(view.sequence, view.payload, view.payloadLength);
     case PacketType::FRAME_COMMIT:
-      return acceptCommit(sequence, payload, payloadLength);
+      return acceptCommit(view.sequence, view.payload, view.payloadLength);
     case PacketType::ACTION:
     case PacketType::COMMAND:
     case PacketType::FRAME_REQUEST:
     case PacketType::FRAME_STATUS:
     case PacketType::VIEWPORT:
+    case PacketType::PLUGIN_UPDATE_HELLO:
+    case PacketType::PLUGIN_UPDATE_BEGIN:
+    case PacketType::PLUGIN_UPDATE_DATA:
+    case PacketType::PLUGIN_UPDATE_END:
+    case PacketType::PLUGIN_UPDATE_STATUS:
     default:
       return AcceptResult::UNEXPECTED_TYPE;
   }

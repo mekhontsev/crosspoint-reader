@@ -1,8 +1,10 @@
 # X4 Terminal BLE Protocol
 
 This experimental X4 Pro-only protocol displays atomic plain-text snapshots of
-one `tmux` pane. It is not a terminal emulator, remote shell, file-transfer
-protocol, pixel-frame protocol, or transport for raw ANSI output.
+one `tmux` pane. The Terminal mode is not a terminal emulator, remote shell,
+pixel-frame protocol, or transport for raw ANSI output. Protocol v4 also
+reserves an authenticated package-transfer mode used only by the Plugins
+manager; that mode never runs while Terminal is active.
 
 ## Frame model
 
@@ -84,8 +86,9 @@ leaving the BLE connection intact.
 - Reader text is data only. Firmware never executes it.
 - Reader commands are allow-listed packet types and travel only over the
   authenticated indication characteristic.
-- The feature does not write CrossPoint settings, SD data, OTA data, partition
-  tables, boot state, or recovery state.
+- Terminal does not write SD data. The Plugins installer may overwrite one
+  validated child module under `/plugins`; it cannot target `manager.so`, OTA
+  data, partition tables, boot state, or recovery state.
 
 The activity uses four 6,145-byte committed-frame slots, one 6,145-byte staging
 slot, and one 256-byte reusable layout buffer. These fixed members total about
@@ -159,6 +162,33 @@ packets.
 Four-byte frame ID. It must match `FRAME_BEGIN`. Length or CRC mismatch rejects
 the frame and leaves the last displayed e-ink image unchanged.
 
+### `PLUGIN_UPDATE_BEGIN` (`10`)
+
+Used only while **Plugins → Install via Bluetooth** is open.
+
+| Payload offset | Size | Field |
+|---:|---:|---|
+| 0 | 1 | Module-name length N, 1-32 |
+| 1 | N | Lowercase module name without `.so` |
+| 1+N | 4 | Complete `.so` byte length |
+| 5+N | 32 | SHA-256 of the complete `.so` |
+
+The reader rejects invalid names, `manager`, a loaded child module, oversized
+files, and overlapping transfers. Success is reported with
+`PLUGIN_UPDATE_STATUS(READY)` before any data is sent.
+
+### `PLUGIN_UPDATE_DATA` (`11`)
+
+Four-byte file offset followed by one non-empty binary chunk. Offsets must be
+strictly sequential. Write-with-response and the reader's bounded GATT queue
+provide backpressure.
+
+### `PLUGIN_UPDATE_END` (`12`)
+
+Four-byte complete file length. The reader requires the declared byte count and
+full-file SHA-256 to match, then validates the embedded plugin trailer, ABI,
+ELF structure, ELF digest, and descriptor export before reporting Complete.
+
 ## Reader-to-Android packets
 
 ### `ACTION` (`3`)
@@ -206,6 +236,19 @@ insert. Retry asks Android to resend the same complete frame from a new begin.
 The reader sends this after connecting and whenever its local font size changes.
 Android forwards it to `x4term`. Rows and columns determine lazy scrollback page
 boundaries; they never resize the user's tmux pane.
+
+### `PLUGIN_UPDATE_HELLO` (`9`)
+
+Sent by the Plugins manager after connection. Its six-byte payload contains the
+four-byte plugin ABI followed by the maximum two-byte update data chunk. A
+client must reject a package whose ABI differs.
+
+### `PLUGIN_UPDATE_STATUS` (`13`)
+
+One status byte followed by a four-byte value: Ready (`1`, value zero), Complete
+(`2`, installed byte count), or Error (`3`, implementation-defined error code).
+On disconnect an incomplete direct write remains an invalid module and a later
+connection restarts that module from offset zero.
 
 ## Text validation
 

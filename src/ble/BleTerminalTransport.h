@@ -39,6 +39,8 @@ class BleTerminalTransport final {
   bool sendFrameRequest(FrameRequest request, uint32_t anchorFrameId);
   bool sendFrameStatus(uint32_t frameId, FrameStatus status);
   bool sendViewport(uint16_t columns, uint16_t rows);
+  bool sendPluginUpdateHello(uint32_t pluginAbi);
+  bool sendPluginUpdateStatus(uint8_t status, uint32_t value);
   bool readyToSend() const;
   size_t maxCommandBytes() const;
   void setTransferActive(bool active);

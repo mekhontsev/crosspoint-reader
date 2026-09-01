@@ -196,4 +196,27 @@ TEST(BleTerminalProtocol, EncodesReaderControlsAndCommands) {
             0U);
 }
 
+TEST(BleTerminalProtocol, EncodesPluginUpdateCapabilitiesAndStatus) {
+  std::array<uint8_t, ble_terminal::MAX_PACKET_BYTES> output{};
+  size_t length = ble_terminal::encodePluginUpdateHelloPacket(3, ble_terminal::MAX_UPDATE_DATA_BYTES, 11, output.data(),
+                                                              output.size());
+  ASSERT_EQ(length, ble_terminal::PACKET_HEADER_BYTES + 6);
+  EXPECT_EQ(output[3], static_cast<uint8_t>(PacketType::PLUGIN_UPDATE_HELLO));
+  EXPECT_EQ(output[ble_terminal::PACKET_HEADER_BYTES], 3);
+  EXPECT_EQ(output[ble_terminal::PACKET_HEADER_BYTES + 4], ble_terminal::MAX_UPDATE_DATA_BYTES & 0xffU);
+
+  ble_terminal::PacketView view{};
+  ASSERT_TRUE(ble_terminal::decodePacket(output.data(), length, view));
+  EXPECT_EQ(view.type, PacketType::PLUGIN_UPDATE_HELLO);
+  EXPECT_EQ(view.sequence, 11U);
+  EXPECT_EQ(view.payloadLength, 6U);
+
+  length = ble_terminal::encodePluginUpdateStatusPacket(2, 300972, 12, output.data(), output.size());
+  ASSERT_EQ(length, ble_terminal::PACKET_HEADER_BYTES + 5);
+  EXPECT_EQ(output[3], static_cast<uint8_t>(PacketType::PLUGIN_UPDATE_STATUS));
+  EXPECT_EQ(output[ble_terminal::PACKET_HEADER_BYTES], 2);
+  EXPECT_EQ(ble_terminal::encodePluginUpdateHelloPacket(3, 0, 13, output.data(), output.size()), 0U);
+  EXPECT_EQ(ble_terminal::encodePluginUpdateStatusPacket(0, 0, 13, output.data(), output.size()), 0U);
+}
+
 }  // namespace

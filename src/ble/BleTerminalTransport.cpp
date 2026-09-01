@@ -283,6 +283,21 @@ bool BleTerminalTransport::sendViewport(const uint16_t columns, const uint16_t r
   return sendPacket(packet.data(), length, "viewport geometry");
 }
 
+bool BleTerminalTransport::sendPluginUpdateHello(const uint32_t pluginAbi) {
+  std::array<uint8_t, PACKET_HEADER_BYTES + 6> packet{};
+  const size_t length =
+      encodePluginUpdateHelloPacket(pluginAbi, MAX_UPDATE_DATA_BYTES, outgoingSequence_, packet.data(), packet.size());
+  if (length == 0) return false;
+  return sendPacket(packet.data(), length, "plugin update hello");
+}
+
+bool BleTerminalTransport::sendPluginUpdateStatus(const uint8_t status, const uint32_t value) {
+  std::array<uint8_t, PACKET_HEADER_BYTES + 5> packet{};
+  const size_t length = encodePluginUpdateStatusPacket(status, value, outgoingSequence_, packet.data(), packet.size());
+  if (length == 0) return false;
+  return sendPacket(packet.data(), length, "plugin update status");
+}
+
 bool BleTerminalTransport::readyToSend() const {
   return status() == Status::CONNECTED && connectionHandle_.load() != NO_CONNECTION && txValueHandle_ != 0 &&
          indicationsEnabled_.load() && !indicationInFlight_.load();

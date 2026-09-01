@@ -58,12 +58,22 @@ table, early boot path, or SD recovery implementation.
 6. Do not press Reset, remove the SD card, disconnect power, or operate the
    reader until the update completes and it restarts.
 7. Extract the plugin ZIP into the root of the SD card. It must create
-   `/apps/crosspoint-plugins/manager.so` and `terminal.so`.
+   `/plugins/manager.so` and `/plugins/terminal.so`.
 8. After boot, confirm that **Plugins** appears in the home menu and contains
    **Terminal**.
 
 The updater validates the ESP image, target chip/board metadata, image checksum,
 size, and SHA-256 trailer before changing the active OTA image.
+
+## Updating child plugins
+
+After the ABI3 firmware and manager are installed once, later child plugins can
+be installed without flashing the reader. Select `crosspoint-plugins.zip` with
+**Choose ZIP** in the bridge, then open **Plugins > Install via Bluetooth** on
+the reader. The bridge validates `plugins/bundle.json`; the reader streams each
+eligible child directly to `/plugins`, verifies it, and adds it to the dynamic
+list. `manager.so` is intentionally excluded and must still be copied over Wi-Fi
+or from the SD card. An interrupted child transfer is retried from the beginning.
 
 ## Connecting
 

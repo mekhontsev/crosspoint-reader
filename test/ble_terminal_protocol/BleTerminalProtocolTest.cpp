@@ -35,7 +35,7 @@ uint32_t crc32(const std::string_view text) {
 }
 
 std::vector<uint8_t> packet(const PacketType type, const uint32_t sequence, const std::string_view payload = {}) {
-  std::vector<uint8_t> out{'X', 'T', 4, static_cast<uint8_t>(type)};
+  std::vector<uint8_t> out{'P', 'W', 4, static_cast<uint8_t>(type)};
   appendLe32(out, sequence);
   appendLe16(out, static_cast<uint16_t>(payload.size()));
   out.insert(out.end(), payload.begin(), payload.end());
@@ -150,7 +150,7 @@ TEST(BleTerminalProtocol, RejectsMalformedHeaderAndVersion) {
   auto begin = packet(PacketType::FRAME_BEGIN, 1, std::string(11, '\0'));
   begin[0] = 'B';
   EXPECT_EQ(fixture.accept(begin), AcceptResult::INVALID_PACKET);
-  begin[0] = 'X';
+  begin[0] = 'P';
   begin[2] = 2;
   EXPECT_EQ(fixture.accept(begin), AcceptResult::UNSUPPORTED_VERSION);
   begin[2] = 4;

@@ -7,13 +7,13 @@
 > project or Xteink. Do not install it on the X4, X3, or any other board.
 >
 > The reader firmware and
-> [`CrossPoint Link`](https://github.com/mekhontsev/crosspoint-link) client have
+> [`PageWire`](https://github.com/mekhontsev/pagewire) client have
 > been exercised end to end on one X4 Pro. The firmware contains a generic
 > **Plugins** host; the menu manager, Terminal activity, and fonts are
 > independently built SD modules from
 > [`crosspoint-plugins`](https://github.com/mekhontsev/crosspoint-plugins).
 > Read the shared
-> [CrossPoint Link and X4 Terminal user guide](https://github.com/mekhontsev/crosspoint-link/blob/main/docs/user-guide.md)
+> [PageWire and X4 Terminal user guide](https://github.com/mekhontsev/pagewire/blob/main/docs/user-guide.md)
 > and its recovery warnings before installing.
 
 > [!NOTE]

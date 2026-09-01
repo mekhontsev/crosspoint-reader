@@ -18,7 +18,7 @@ DEVICE_NAME = "X4 Terminal"
 RX_CHARACTERISTIC_UUID = "6f2c8f10-7f7a-4f1e-a2a6-8e8b7b3f6d12"
 TX_CHARACTERISTIC_UUID = "6f2c8f10-7f7a-4f1e-a2a6-8e8b7b3f6d13"
 
-MAGIC = b"XT"
+MAGIC = b"PW"
 PROTOCOL_VERSION = 4
 FRAME_BEGIN = 1
 FRAME_DATA = 2
@@ -202,9 +202,9 @@ def frame_packets(text: str, frame_id: int, sequence: int, packet_limit: int, fl
 
 def run_self_test() -> None:
     begin = make_frame_begin(7, 9, b"hi", FRAME_FLAG_LATEST | FRAME_FLAG_PRESENT)
-    assert begin.hex() == "58540401070000000b00090000000200ac2a93d803"
-    assert make_packet(FRAME_DATA, 8, b"hi").hex() == "585404020800000002006869"
-    assert make_frame_commit(9, 9).hex() == "5854040509000000040009000000"
+    assert begin.hex() == "50570401070000000b00090000000200ac2a93d803"
+    assert make_packet(FRAME_DATA, 8, b"hi").hex() == "505704020800000002006869"
+    assert make_frame_commit(9, 9).hex() == "5057040509000000040009000000"
     assert clean_display_text("a\x1b[31mred\x1b[0m\r\nb\x00") == "ared\nb"
     chunks = list(utf8_chunks("AЖ🙂B", 5))
     assert b"".join(chunks).decode("utf-8") == "AЖ🙂B"

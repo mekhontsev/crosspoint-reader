@@ -5,8 +5,8 @@
 namespace ble_terminal {
 namespace {
 
-constexpr uint8_t MAGIC_0 = 'X';
-constexpr uint8_t MAGIC_1 = 'T';
+constexpr uint8_t MAGIC_0 = 'P';
+constexpr uint8_t MAGIC_1 = 'W';
 constexpr size_t FRAME_BEGIN_PAYLOAD_BYTES = 11;
 constexpr size_t FRAME_ID_PAYLOAD_BYTES = sizeof(uint32_t);
 constexpr size_t FRAME_CONTROL_PAYLOAD_BYTES = sizeof(uint32_t) + sizeof(uint8_t);

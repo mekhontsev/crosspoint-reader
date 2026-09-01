@@ -73,6 +73,6 @@ CrossPoint.
 ## Source and protocol
 
 - Branch: `feature/ble-terminal`
-- Firmware protocol: [`ble-terminal-protocol.md`](../ble-terminal-protocol.md)
-- Android handoff: [`x4-terminal-android-handoff.md`](../x4-terminal-android-handoff.md)
+- Protocol: [CrossPoint Link Protocol](https://github.com/mekhontsev/crosspoint-link/blob/main/docs/crosspoint-link-protocol.md)
+- Client architecture: [CrossPoint Link Architecture](https://github.com/mekhontsev/crosspoint-link/blob/main/docs/architecture.md)
 - License: MIT; upstream copyright and license are retained.

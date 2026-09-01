@@ -17,9 +17,10 @@ to the home menu.
 
 The SD-loaded plugin bundle lives in
 [`mekhontsev/crosspoint-plugins`](https://github.com/mekhontsev/crosspoint-plugins).
-The companion Android APK and `x4term` Termux helper live in the separate
-[`x4-terminal-bridge`](https://github.com/mekhontsev/x4-terminal-bridge)
-repository. Firmware, plugins, and APK must support the same plugin/wire ABIs.
+The CrossPoint Link Android client, `x4term` Termux adapter, protocol
+specification, and test vectors live in the separate
+[`crosspoint-link`](https://github.com/mekhontsev/crosspoint-link) repository.
+Firmware, plugins, and client must support the same plugin/wire ABIs.
 
 ## Safety prerequisites
 
@@ -69,22 +70,23 @@ size, and SHA-256 trailer before changing the active OTA image.
 
 After the ABI3 firmware and manager are installed once, later child plugins can
 be installed without flashing the reader. Select `crosspoint-plugins.zip` with
-**Choose ZIP** in the bridge, then open **Plugins > Install via Bluetooth** on
-the reader. The bridge validates `plugins/bundle.json`; the reader streams each
+**Choose ZIP** in CrossPoint Link, then open **Plugins > Install via Bluetooth**
+on the reader. The client validates `plugins/bundle.json`; the reader streams each
 eligible child directly to `/plugins`, verifies it, and adds it to the dynamic
 list. `manager.so` is intentionally excluded and must still be copied over Wi-Fi
 or from the SD card. An interrupted child transfer is retried from the beginning.
 
 ## Connecting
 
-Install and configure the APK and helper as described in the bridge repository.
+Install and configure the APK and helper as described in the CrossPoint Link
+repository.
 Run the shell, SSH client, or Codex session in a named `tmux` pane, then start:
 
 ```sh
 x4term serve
 ```
 
-Choose the tmux pane in the APK, enable the bridge service, and open
+Choose the tmux pane in the APK, start CrossPoint Link, and open
 **Plugins > Terminal** on the reader. On the first
 connection the reader displays a random six-digit passkey; enter it in Android's
 system pairing dialog. The bond is reused later. Re-entering Terminal makes
@@ -113,9 +115,10 @@ Android reconnect and send one current screen rather than replaying the session.
 - Back: leave Terminal, stop its BLE stack, and return directly to the main
   menu with **Plugins** selected.
 
-Font changes are local. Paging contacts Android only when the adjacent page is
-not in the four-frame reader cache. A jump to the newest screen transfers only
-that screen; it neither preloads nor forcibly clears the other three slots.
+Font changes are local. Paging contacts CrossPoint Link only when the adjacent
+page is not in the four-frame reader cache. A jump to the newest screen
+transfers only that screen; it neither preloads nor forcibly clears the other
+three slots.
 
 ## Data, refresh, and power behavior
 
@@ -138,7 +141,7 @@ the newest pending screen. Manual Refresh and history navigation do not wait for
 that interval.
 
 The Android foreground service holds a partial wake lock while started. For
-reliable screen-off operation, set both X4 Terminal Bridge and Termux to
+reliable screen-off operation, set both CrossPoint Link and Termux to
 unrestricted battery use on the phone; the helper also uses Termux:API's wake
 lock command when it is installed.
 
@@ -182,11 +185,12 @@ path has been tested on hardware.
 
 - X4 Pro only.
 - Plain text only; no colors, cursor, images, mouse, or full terminal emulation.
-- Reader history is four scrollback pages and exists only while Terminal is
-  open; Android retains up to 64 pages from the latest lazy capture.
+- The reader caches four scrollback pages at a time and lazily requests missing
+  adjacent pages from CrossPoint Link, which retains up to 64 pages from the
+  latest bounded capture. History older than that capture is unavailable.
 - Animation-only redraws deliberately remain hidden until Confirm or subsequent
   upward progress.
-- The loader accepts a module when plugin ABI 2 matches and its integrity check
+- The loader accepts a module when plugin ABI 3 matches and its integrity check
   passes. An actually incompatible plugin can crash the activity and restart
   the reader. Removing its `.so` from the SD card disables it.
 - Current firmware UI emits only a literal command plus Enter, or Enter alone.

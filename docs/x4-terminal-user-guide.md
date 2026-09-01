@@ -21,6 +21,9 @@ The CrossPoint Link Android client, `x4term` Termux adapter, protocol
 specification, and test vectors live in the separate
 [`crosspoint-link`](https://github.com/mekhontsev/crosspoint-link) repository.
 Firmware, plugins, and client must support the same plugin/wire ABIs.
+The independent-module design and its crash/recovery boundary are documented in
+the plugin repository's
+[architecture guide](https://github.com/mekhontsev/crosspoint-plugins/blob/main/ARCHITECTURE.md).
 
 ## Safety prerequisites
 

@@ -14,7 +14,10 @@
 > [`crosspoint-plugins`](https://github.com/mekhontsev/crosspoint-plugins).
 > Read the shared
 > [PageWire and X4 Terminal user guide](https://github.com/mekhontsev/pagewire/blob/main/docs/user-guide.md)
-> and its recovery warnings before installing.
+> and its recovery warnings before installing. Plugin authors can use the
+> separate
+> [Plugin Development guide](https://github.com/mekhontsev/crosspoint-plugins/blob/main/PLUGIN_DEVELOPMENT.md)
+> for the native module contract, host services, and shared BLE/PageWire API.
 
 > [!NOTE]
 > The experimental fork-specific changes in this repository are **AI

@@ -11,6 +11,8 @@ constexpr size_t MAX_COMMAND_BYTES = MAX_PACKET_BYTES - PACKET_HEADER_BYTES;
 constexpr size_t MAX_UPDATE_DATA_BYTES = MAX_PACKET_BYTES - PACKET_HEADER_BYTES - sizeof(uint32_t);
 constexpr size_t MAX_FRAME_BYTES = 6 * 1024;
 constexpr uint8_t PROTOCOL_VERSION = 4;
+constexpr uint8_t MAGIC_0 = 'P';
+constexpr uint8_t MAGIC_1 = 'W';
 
 enum class PacketType : uint8_t {
   FRAME_BEGIN = 1,

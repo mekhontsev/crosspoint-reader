@@ -144,12 +144,6 @@ Conversion runs the firmware repo's `lib/EpdFont/scripts/fontconvert_sdcard.py` 
 
 ## Documentation
 
-- [X4 Terminal user guide](./docs/x4-terminal-user-guide.md) — scope, safety,
-  installation, controls, rollback, and current limitations for this fork
-- [X4 Terminal BLE protocol](./docs/ble-terminal-protocol.md) — firmware wire
-  protocol and desktop smoke test
-- [X4 Terminal Android handoff](./docs/x4-terminal-android-handoff.md) — normative
-  APK/Termux architecture and acceptance tests
 - [User Guide](./USER_GUIDE.md)
 - [Web server usage](./docs/webserver.md)
 - [Web server endpoints](./docs/webserver-endpoints.md)

@@ -12,8 +12,15 @@
 > **Plugins** host; the menu manager, Terminal activity, and fonts are
 > independently built SD modules from
 > [`crosspoint-plugins`](https://github.com/mekhontsev/crosspoint-plugins).
-> Read the [X4 Terminal user guide](docs/x4-terminal-user-guide.md) and its
-> recovery warnings before installing.
+> Read the shared
+> [CrossPoint Link and X4 Terminal user guide](https://github.com/mekhontsev/crosspoint-link/blob/main/docs/user-guide.md)
+> and its recovery warnings before installing.
+
+> [!NOTE]
+> The experimental fork-specific changes in this repository are **AI
+> vibe-coded**: implementation and documentation are developed with AI coding
+> agents under maintainer direction, review, builds, and hardware testing. This
+> statement does not apply to the independent upstream CrossPoint project.
 
 [![Fund contributors](https://img.shields.io/badge/%F0%9F%91%91_Fund_contributors-royalty.dev-BB953A?style=for-the-badge&labelColor=1a1a1a)](https://app.royalty.dev/crosspoint-reader/crosspoint-reader)
 

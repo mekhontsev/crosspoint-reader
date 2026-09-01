@@ -56,8 +56,9 @@ another CrossPoint board.
 
 ## Installation and rollback
 
-Read the full [X4 Terminal user guide](../x4-terminal-user-guide.md) before
-installing. In summary:
+Read the shared
+[CrossPoint Link and X4 Terminal user guide](https://github.com/mekhontsev/crosspoint-link/blob/main/docs/user-guide.md)
+before installing. In summary:
 
 1. Start from a working CrossPoint installation on an Xteink X4 Pro.
 2. Keep an official upstream X4 Pro rollback binary on the SD card.

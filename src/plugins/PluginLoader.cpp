@@ -21,7 +21,7 @@
 #include "Memory.h"
 #include "activities/Activity.h"
 #include "activities/util/KeyboardEntryActivity.h"
-#include "ble/BleTerminalTransport.h"
+#include "ble/PluginBleTransport.h"
 #include "plugins/PluginAbi.h"
 #include "plugins/PluginHostSymbols.h"
 #include "private/elf_platform.h"
@@ -516,10 +516,6 @@ extern "C" uint8_t crosspoint_plugin_take_text_keyboard_result_v2(char* text, co
   return true;
 }
 
-extern "C" uint8_t crosspoint_plugin_send_terminal_command_v2(const char* text, const size_t length) {
-  return ble_terminal::sharedTransport().sendCommand(text, length);
-}
-
 extern "C" size_t crosspoint_plugin_list_v3(crosspoint_plugin::PluginInfoV3* modules, const size_t capacity) {
   return PLUGIN_LOADER.listChildren(modules, std::min(capacity, crosspoint_plugin::MAX_LISTED_MODULES));
 }
@@ -537,13 +533,47 @@ extern "C" uint8_t crosspoint_plugin_install_finish_v3() { return PLUGIN_LOADER.
 
 extern "C" void crosspoint_plugin_install_abort_v3() { PLUGIN_LOADER.abortInstall(); }
 
-extern "C" uint8_t crosspoint_plugin_send_update_hello_v3() {
-  return ble_terminal::sharedTransport().sendPluginUpdateHello(crosspoint_plugin::ABI_VERSION);
+extern "C" uint8_t crosspoint_plugin_ble_start_v4() { return plugin_ble::sharedPluginBleTransport().start(); }
+
+extern "C" void crosspoint_plugin_ble_stop_v4() { plugin_ble::sharedPluginBleTransport().stop(); }
+
+extern "C" uint8_t crosspoint_plugin_ble_poll_v4(uint8_t* packet, const size_t capacity, size_t* length) {
+  if (!packet || !length) return false;
+  plugin_ble::PluginBleTransport::IncomingPacket incoming{};
+  if (!plugin_ble::sharedPluginBleTransport().poll(incoming) || capacity < incoming.length) return false;
+  std::memcpy(packet, incoming.bytes.data(), incoming.length);
+  *length = incoming.length;
+  return true;
 }
 
-extern "C" uint8_t crosspoint_plugin_send_update_status_v3(const crosspoint_plugin::UpdateStatusV3 status,
-                                                           const uint32_t value) {
-  return ble_terminal::sharedTransport().sendPluginUpdateStatus(static_cast<uint8_t>(status), value);
+extern "C" uint8_t crosspoint_plugin_ble_send_v4(const uint8_t* packet, const size_t length) {
+  return plugin_ble::sharedPluginBleTransport().send(packet, length);
+}
+
+extern "C" uint8_t crosspoint_plugin_ble_ready_v4() { return plugin_ble::sharedPluginBleTransport().readyToSend(); }
+
+extern "C" size_t crosspoint_plugin_ble_max_packet_bytes_v4() {
+  return plugin_ble::sharedPluginBleTransport().maxPacketBytes();
+}
+
+extern "C" void crosspoint_plugin_ble_set_transfer_active_v4(const uint8_t active) {
+  plugin_ble::sharedPluginBleTransport().setTransferActive(active != 0);
+}
+
+extern "C" crosspoint_plugin::PluginBleStatusV4 crosspoint_plugin_ble_status_v4() {
+  return static_cast<crosspoint_plugin::PluginBleStatusV4>(plugin_ble::sharedPluginBleTransport().status());
+}
+
+extern "C" uint32_t crosspoint_plugin_ble_status_revision_v4() {
+  return plugin_ble::sharedPluginBleTransport().statusRevision();
+}
+
+extern "C" uint32_t crosspoint_plugin_ble_dropped_packets_v4() {
+  return plugin_ble::sharedPluginBleTransport().droppedPackets();
+}
+
+extern "C" uint32_t crosspoint_plugin_ble_pairing_passkey_v4() {
+  return plugin_ble::sharedPluginBleTransport().pairingPasskey();
 }
 
 #endif

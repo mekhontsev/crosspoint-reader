@@ -12,8 +12,8 @@ namespace header_keyboard_button {
 
 enum class Glyph { KEYBOARD, FONT_DECREASE, FONT_INCREASE };
 
-inline Rect layout(const GfxRenderer& renderer, const ThemeMetrics& metrics, const char* title,
-                   const size_t slot = 0, const size_t slotCount = 1, const int titleGap = 8) {
+inline Rect layout(const GfxRenderer& renderer, const ThemeMetrics& metrics, const char* title, const size_t slot = 0,
+                   const size_t slotCount = 1, const int titleGap = 8) {
   constexpr int width = 48;
   constexpr int height = 30;
   constexpr int buttonGap = 6;
@@ -33,13 +33,13 @@ inline Rect layout(const GfxRenderer& renderer, const ThemeMetrics& metrics, con
   // Match BaseTheme::drawHeader's title line: Lyra puts the title in the
   // lower sub-band, while shared-line headers vertically center it.
   const int titleLineHeight = renderer.getLineHeight(UI_12_FONT_ID);
-  const int titleTop = metrics.headerBatteryDetached
-                           ? metrics.topPadding + metrics.headerHeight - metrics.headerUnderlineSize -
-                                 titleBottomGap - titleLineHeight
-                           : metrics.topPadding + (metrics.headerHeight - titleLineHeight) / 2;
+  const int titleTop =
+      metrics.headerBatteryDetached
+          ? metrics.topPadding + metrics.headerHeight - metrics.headerUnderlineSize - titleBottomGap - titleLineHeight
+          : metrics.topPadding + (metrics.headerHeight - titleLineHeight) / 2;
   const int y = titleTop + (titleLineHeight - height) / 2;
-  const int groupWidth = static_cast<int>(normalizedSlotCount) * width +
-                         static_cast<int>(normalizedSlotCount - 1) * buttonGap;
+  const int groupWidth =
+      static_cast<int>(normalizedSlotCount) * width + static_cast<int>(normalizedSlotCount - 1) * buttonGap;
   const int groupRightLimit = screenWidth - metrics.headerSidePadding - groupWidth;
   const int groupX = std::min(titleX + titleWidth + titleGap, groupRightLimit);
   const int x = groupX + static_cast<int>(normalizedSlot) * (width + buttonGap);

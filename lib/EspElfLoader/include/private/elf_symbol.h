@@ -21,16 +21,16 @@ extern "C" {
  *       to the generic pointer type used in esp_elfsym structure.
  *       This is safe for functions and objects with static storage duration.
  */
-#define ESP_ELFSYM_EXPORT(_sym)     { #_sym, (void*)&_sym }
+#define ESP_ELFSYM_EXPORT(_sym) {#_sym, (void*)&_sym}
 
 /* End of symbol table marker */
-#define ESP_ELFSYM_END              { NULL,  NULL }
+#define ESP_ELFSYM_END {NULL, NULL}
 
 /** @brief Function symbol description */
 
 struct esp_elfsym {
-    const char  *name;      /*!< Function name */
-    const void  *sym;       /*!< Function pointer */
+  const char* name; /*!< Function name */
+  const void* sym;  /*!< Function pointer */
 };
 
 /**
@@ -63,7 +63,7 @@ struct esp_elfsym {
  * elf_set_symbol_resolver(my_resolver);
  * ```
  */
-typedef uintptr_t (*symbol_resolver)(const char *sym_name);
+typedef uintptr_t (*symbol_resolver)(const char* sym_name);
 
 /**
  * @brief Find symbol address by name.
@@ -72,7 +72,7 @@ typedef uintptr_t (*symbol_resolver)(const char *sym_name);
  *
  * @return Symbol address if success or 0 if failed.
  */
-uintptr_t elf_find_sym(const char *sym_name);
+uintptr_t elf_find_sym(const char* sym_name);
 
 /**
  * @brief Find symbol address by name.
@@ -81,7 +81,7 @@ uintptr_t elf_find_sym(const char *sym_name);
  *
  * @return Symbol address if success or 0 if failed.
  */
-uintptr_t elf_find_sym_default(const char *sym_name);
+uintptr_t elf_find_sym_default(const char* sym_name);
 
 /**
  * @brief Override the internal symbol resolver.

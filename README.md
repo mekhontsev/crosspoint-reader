@@ -1,23 +1,24 @@
 # CrossPoint Reader
 
 > [!WARNING]
-> **Unofficial experimental X4 Terminal fork.** This branch adds encrypted BLE
-> plain-text terminal mirroring for the **Xteink X4 Pro only**. It is not an
+> **Unofficial experimental X4 Pro plugin-host fork.** This branch adds lazy
+> SD-loaded native plugins and a generic authenticated BLE packet service for
+> the **Xteink X4 Pro only**. It is not an
 > official CrossPoint release and is not supported by the upstream CrossPoint
 > project or Xteink. Do not install it on the X4, X3, or any other board.
 >
-> The reader firmware and
-> [`PageWire`](https://github.com/mekhontsev/pagewire) client have
-> been exercised end to end on one X4 Pro. The firmware contains a generic
-> **Plugins** host; the menu manager, Terminal activity, and fonts are
-> independently built SD modules from
+> The firmware contains only the **Plugins** entry, loader, host ABI, keyboard
+> bridge, and raw BLE service. Plugin names, UI, fonts, and application
+> protocols are independently built SD modules from
 > [`crosspoint-plugins`](https://github.com/mekhontsev/crosspoint-plugins).
-> Read the shared
-> [PageWire and X4 Terminal user guide](https://github.com/mekhontsev/pagewire/blob/main/docs/user-guide.md)
-> and its recovery warnings before installing. Plugin authors can use the
-> separate
+> Terminal uses the independent
+> [`PageWire`](https://github.com/mekhontsev/pagewire) companion, but firmware
+> does not parse PageWire and other plugins may use the BLE service for their own
+> protocols. Read the single
+> [PageWire Terminal user guide](https://github.com/mekhontsev/pagewire/blob/main/docs/user-guide.md)
+> and its recovery warnings before installing. Authors should use the
 > [Plugin Development guide](https://github.com/mekhontsev/crosspoint-plugins/blob/main/PLUGIN_DEVELOPMENT.md)
-> for the native module contract, host services, and shared BLE/PageWire API.
+> for the native contract and generic BLE API.
 
 > [!NOTE]
 > The experimental fork-specific changes in this repository are **AI

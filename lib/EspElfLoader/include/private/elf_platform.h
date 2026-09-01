@@ -14,8 +14,7 @@ extern "C" {
 
 /* Notes: align_size needs to be a power of 2 */
 
-#define ELF_ALIGN(_a, align_size) (((_a) + (align_size - 1)) & \
-                                   ~(align_size - 1))
+#define ELF_ALIGN(_a, align_size) (((_a) + (align_size - 1)) & ~(align_size - 1))
 
 /**
  * @brief Allocate block of memory.
@@ -25,7 +24,7 @@ extern "C" {
  *
  * @return Memory pointer if success or NULL if failed.
  */
-void *esp_elf_malloc(uint32_t n, bool exec);
+void* esp_elf_malloc(uint32_t n, bool exec);
 
 /**
  * @brief Free block of memory.
@@ -34,7 +33,7 @@ void *esp_elf_malloc(uint32_t n, bool exec);
  *
  * @return None
  */
-void esp_elf_free(void *ptr);
+void esp_elf_free(void* ptr);
 
 /**
  * @brief Relocates target architecture symbol of ELF
@@ -46,8 +45,7 @@ void esp_elf_free(void *ptr);
  *
  * @return ESP_OK if success or other if failed.
  */
-int esp_elf_arch_relocate(esp_elf_t *elf, const elf32_rela_t *rela,
-                          const elf32_sym_t *sym, uint32_t addr);
+int esp_elf_arch_relocate(esp_elf_t* elf, const elf32_rela_t* rela, const elf32_sym_t* sym, uint32_t addr);
 
 /**
  * @brief Remap symbol from ".data" to ".text" section.
@@ -58,7 +56,7 @@ int esp_elf_arch_relocate(esp_elf_t *elf, const elf32_rela_t *rela,
  * @return Remapped symbol value
  */
 #ifdef CONFIG_ELF_LOADER_CACHE_OFFSET
-uintptr_t elf_remap_text(esp_elf_t *elf, uintptr_t sym);
+uintptr_t elf_remap_text(esp_elf_t* elf, uintptr_t sym);
 #endif
 
 /**
@@ -78,7 +76,7 @@ void esp_elf_arch_flush(void);
  * @return 0 if success or a negative value if failed.
  */
 #ifdef CONFIG_ELF_LOADER_SET_MMU
-int esp_elf_arch_init_mmu(esp_elf_t *elf);
+int esp_elf_arch_init_mmu(esp_elf_t* elf);
 #endif
 
 /**
@@ -89,7 +87,7 @@ int esp_elf_arch_init_mmu(esp_elf_t *elf);
  * @return None
  */
 #ifdef CONFIG_ELF_LOADER_SET_MMU
-void esp_elf_arch_deinit_mmu(esp_elf_t *elf);
+void esp_elf_arch_deinit_mmu(esp_elf_t* elf);
 #endif
 
 #ifdef __cplusplus

@@ -29,7 +29,6 @@ framework_libs = Path(platform.get_package_dir("framework-arduinoespressif32-lib
 # it.
 if env.subst("$PIOENV") in {
     "x4pro",
-    "x4pro-ble-terminal",
     "x4pro-gh_release",
     "x4pro-gh_release_rc",
 }:

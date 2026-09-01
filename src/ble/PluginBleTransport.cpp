@@ -1,4 +1,4 @@
-#include "BleTerminalTransport.h"
+#include "PluginBleTransport.h"
 
 #if defined(ENABLE_PLUGIN_BLE_HOST) && ENABLE_PLUGIN_BLE_HOST
 
@@ -28,10 +28,10 @@
 // This is the same declaration used by the official NimBLE Security example.
 extern "C" void ble_store_config_init(void);
 
-namespace ble_terminal {
+namespace plugin_ble {
 namespace {
 
-constexpr char DEVICE_NAME[] = "X4 Terminal";
+constexpr char DEVICE_NAME[] = "CrossPoint Plugins";
 constexpr uint16_t ACTIVE_CONNECTION_INTERVAL_MIN = 12;  // 15 ms in 1.25 ms units
 constexpr uint16_t ACTIVE_CONNECTION_INTERVAL_MAX = 24;  // 30 ms in 1.25 ms units
 constexpr uint16_t ACTIVE_CONNECTION_LATENCY = 0;
@@ -62,46 +62,46 @@ ble_gatt_svc_def services[2]{};
 
 }  // namespace
 
-static_assert(std::is_trivially_copyable_v<BleTerminalTransport::IncomingPacket>);
+static_assert(std::is_trivially_copyable_v<PluginBleTransport::IncomingPacket>);
 
-std::atomic<BleTerminalTransport*> BleTerminalTransport::active_{nullptr};
+std::atomic<PluginBleTransport*> PluginBleTransport::active_{nullptr};
 
-BleTerminalTransport::BleTerminalTransport() {
+PluginBleTransport::PluginBleTransport() {
   queue_ = xQueueCreateStatic(QUEUE_DEPTH, sizeof(IncomingPacket), queueStorage_.data(), &queueControl_);
 }
 
-BleTerminalTransport::~BleTerminalTransport() { stop(); }
+PluginBleTransport::~PluginBleTransport() { stop(); }
 
-BleTerminalTransport& sharedTransport() {
-  static BleTerminalTransport transport;
+PluginBleTransport& sharedPluginBleTransport() {
+  static PluginBleTransport transport;
   return transport;
 }
 
-void BleTerminalTransport::setStatus(const Status status) {
+void PluginBleTransport::setStatus(const Status status) {
   if (status_.exchange(status) != status) statusRevision_++;
 }
 
-void BleTerminalTransport::setPairingPasskey(const uint32_t passkey) {
+void PluginBleTransport::setPairingPasskey(const uint32_t passkey) {
   if (pairingPasskey_.exchange(passkey) != passkey) statusRevision_++;
 }
 
-bool BleTerminalTransport::failStart(const char* reason, const int errorCode) {
-  LOG_ERR("BLE_TERM", "%s (%d)", reason, errorCode);
+bool PluginBleTransport::failStart(const char* reason, const int errorCode) {
+  LOG_ERR("PLUGIN_BLE", "%s (%d)", reason, errorCode);
   stop();
   setStatus(Status::ERROR);
   return false;
 }
 
-bool BleTerminalTransport::configureGatt() {
+bool PluginBleTransport::configureGatt() {
   std::memset(characteristics, 0, sizeof(characteristics));
   std::memset(services, 0, sizeof(services));
 
   characteristics[0].uuid = &RX_UUID.u;
-  characteristics[0].access_cb = &BleTerminalTransport::gattAccess;
+  characteristics[0].access_cb = &PluginBleTransport::gattAccess;
   characteristics[0].flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_ENC | BLE_GATT_CHR_F_WRITE_AUTHEN;
 
   characteristics[1].uuid = &TX_UUID.u;
-  characteristics[1].access_cb = &BleTerminalTransport::gattAccess;
+  characteristics[1].access_cb = &PluginBleTransport::gattAccess;
   characteristics[1].flags = BLE_GATT_CHR_F_INDICATE;
   characteristics[1].val_handle = &txValueHandle_;
 
@@ -111,18 +111,18 @@ bool BleTerminalTransport::configureGatt() {
 
   int result = ble_gatts_count_cfg(services);
   if (result != 0) {
-    LOG_ERR("BLE_TERM", "Unable to count GATT service (%d)", result);
+    LOG_ERR("PLUGIN_BLE", "Unable to count GATT service (%d)", result);
     return false;
   }
   result = ble_gatts_add_svcs(services);
   if (result != 0) {
-    LOG_ERR("BLE_TERM", "Unable to add GATT service (%d)", result);
+    LOG_ERR("PLUGIN_BLE", "Unable to add GATT service (%d)", result);
     return false;
   }
   return true;
 }
 
-bool BleTerminalTransport::start() {
+bool PluginBleTransport::start() {
   if (status() != Status::STOPPED && status() != Status::ERROR) return true;
   if (!queue_) return failStart("Packet queue is unavailable", ESP_ERR_NO_MEM);
 
@@ -133,24 +133,23 @@ bool BleTerminalTransport::start() {
   indicationsEnabled_ = false;
   indicationInFlight_ = false;
   txValueHandle_ = 0;
-  outgoingSequence_ = 0;
   stopping_.store(false);
   transferActive_.store(false);
   active_.store(this);
   setStatus(Status::STARTING);
 
-  LOG_INF("BLE_TERM", "Initializing NimBLE port");
+  LOG_INF("PLUGIN_BLE", "Initializing NimBLE port");
   const esp_err_t initResult = nimble_port_init();
   if (initResult != ESP_OK) return failStart("NimBLE initialization failed", initResult);
   stackInitialized_ = true;
-  LOG_INF("BLE_TERM", "NimBLE port initialized");
+  LOG_INF("PLUGIN_BLE", "NimBLE port initialized");
 
   constexpr uint16_t PREFERRED_ATT_MTU = 247;
   const int mtuResult = ble_att_set_preferred_mtu(PREFERRED_ATT_MTU);
   if (mtuResult != 0) return failStart("Unable to set preferred ATT MTU", mtuResult);
 
-  ble_hs_cfg.reset_cb = &BleTerminalTransport::onReset;
-  ble_hs_cfg.sync_cb = &BleTerminalTransport::onSync;
+  ble_hs_cfg.reset_cb = &PluginBleTransport::onReset;
+  ble_hs_cfg.sync_cb = &PluginBleTransport::onSync;
   ble_hs_cfg.sm_io_cap = BLE_HS_IO_DISPLAY_ONLY;
   ble_hs_cfg.sm_bonding = 1;
   ble_hs_cfg.sm_mitm = 1;
@@ -167,17 +166,17 @@ bool BleTerminalTransport::start() {
   int result = ble_svc_gap_device_name_set(DEVICE_NAME);
   if (result != 0) return failStart("Unable to set BLE device name", result);
   if (!configureGatt()) return failStart("Unable to configure GATT", ESP_FAIL);
-  LOG_INF("BLE_TERM", "GATT services queued");
+  LOG_INF("PLUGIN_BLE", "GATT services queued");
 
   hostTaskStarted_ = true;
-  nimble_port_freertos_init(&BleTerminalTransport::hostTask);
-  LOG_INF("BLE_TERM", "NimBLE host task launched");
+  nimble_port_freertos_init(&PluginBleTransport::hostTask);
+  LOG_INF("PLUGIN_BLE", "NimBLE host task launched");
 
   constexpr int SYNC_WAIT_STEPS = 200;
   for (int step = 0; step < SYNC_WAIT_STEPS; ++step) {
     const Status current = status();
     if (current == Status::ADVERTISING || current == Status::CONNECTED) {
-      LOG_INF("BLE_TERM", "NimBLE synchronized");
+      LOG_INF("PLUGIN_BLE", "NimBLE synchronized");
       return true;
     }
     if (current == Status::ERROR) return failStart("NimBLE host failed to synchronize", ESP_FAIL);
@@ -186,16 +185,16 @@ bool BleTerminalTransport::start() {
   return failStart("NimBLE host synchronization timed out", ESP_ERR_TIMEOUT);
 }
 
-void BleTerminalTransport::stop() {
+void PluginBleTransport::stop() {
   if (!stackInitialized_ && !hostTaskStarted_) {
-    BleTerminalTransport* expected = this;
+    PluginBleTransport* expected = this;
     active_.compare_exchange_strong(expected, nullptr);
     setStatus(Status::STOPPED);
     return;
   }
 
   stopping_.store(true);
-  LOG_INF("BLE_TERM", "Stopping NimBLE host");
+  LOG_INF("PLUGIN_BLE", "Stopping NimBLE host");
 
   if (hostTaskStarted_) {
     // nimble_port_stop() performs the complete host stop procedure, including
@@ -204,26 +203,26 @@ void BleTerminalTransport::stop() {
     // asynchronous GAP events against the host stop caused exit-time resets.
     const int stopResult = nimble_port_stop();
     if (stopResult != 0) {
-      LOG_ERR("BLE_TERM", "NimBLE stop failed (%d)", stopResult);
+      LOG_ERR("PLUGIN_BLE", "NimBLE stop failed (%d)", stopResult);
       stopping_.store(false);
       setStatus(Status::ERROR);
       return;
     }
-    LOG_INF("BLE_TERM", "NimBLE host stopped");
+    LOG_INF("PLUGIN_BLE", "NimBLE host stopped");
   }
 
   if (stackInitialized_) {
     const esp_err_t deinitResult = nimble_port_deinit();
     if (deinitResult != ESP_OK) {
-      LOG_ERR("BLE_TERM", "NimBLE deinit failed (%d)", deinitResult);
+      LOG_ERR("PLUGIN_BLE", "NimBLE deinit failed (%d)", deinitResult);
       stopping_.store(false);
       setStatus(Status::ERROR);
       return;
     }
-    LOG_INF("BLE_TERM", "NimBLE port deinitialized");
+    LOG_INF("PLUGIN_BLE", "NimBLE port deinitialized");
   }
 
-  BleTerminalTransport* expected = this;
+  PluginBleTransport* expected = this;
   active_.compare_exchange_strong(expected, nullptr);
   stackInitialized_ = false;
   hostTaskStarted_ = false;
@@ -237,82 +236,23 @@ void BleTerminalTransport::stop() {
   setStatus(Status::STOPPED);
 }
 
-bool BleTerminalTransport::poll(IncomingPacket& packet) {
-  return queue_ && xQueueReceive(queue_, &packet, 0) == pdPASS;
-}
+bool PluginBleTransport::poll(IncomingPacket& packet) { return queue_ && xQueueReceive(queue_, &packet, 0) == pdPASS; }
 
-bool BleTerminalTransport::sendAction(const Action action) {
-  std::array<uint8_t, PACKET_HEADER_BYTES + 1> packet{};
-  const size_t length = encodeActionPacket(action, outgoingSequence_, packet.data(), packet.size());
-  if (length == 0) return false;
-  return sendPacket(packet.data(), length, "reader action");
-}
-
-bool BleTerminalTransport::sendCommand(const std::string& command) {
-  return sendCommand(command.data(), command.size());
-}
-
-bool BleTerminalTransport::sendCommand(const char* command, const size_t commandLength) {
-  if (!command && commandLength != 0) return false;
-  std::array<uint8_t, MAX_PACKET_BYTES> packet{};
-  const size_t length = encodeCommandPacket(reinterpret_cast<const uint8_t*>(command), commandLength, outgoingSequence_,
-                                            packet.data(), packet.size());
-  if (length == 0 || commandLength > maxCommandBytes()) return false;
-  return sendPacket(packet.data(), length, "reader command");
-}
-
-bool BleTerminalTransport::sendFrameRequest(const FrameRequest request, const uint32_t anchorFrameId) {
-  std::array<uint8_t, PACKET_HEADER_BYTES + 5> packet{};
-  const size_t length =
-      encodeFrameRequestPacket(request, anchorFrameId, outgoingSequence_, packet.data(), packet.size());
-  if (length == 0) return false;
-  return sendPacket(packet.data(), length, "frame request");
-}
-
-bool BleTerminalTransport::sendFrameStatus(const uint32_t frameId, const FrameStatus status) {
-  std::array<uint8_t, PACKET_HEADER_BYTES + 5> packet{};
-  const size_t length = encodeFrameStatusPacket(frameId, status, outgoingSequence_, packet.data(), packet.size());
-  if (length == 0) return false;
-  return sendPacket(packet.data(), length, "frame status");
-}
-
-bool BleTerminalTransport::sendViewport(const uint16_t columns, const uint16_t rows) {
-  std::array<uint8_t, PACKET_HEADER_BYTES + 4> packet{};
-  const size_t length = encodeViewportPacket(columns, rows, outgoingSequence_, packet.data(), packet.size());
-  if (length == 0) return false;
-  return sendPacket(packet.data(), length, "viewport geometry");
-}
-
-bool BleTerminalTransport::sendPluginUpdateHello(const uint32_t pluginAbi) {
-  std::array<uint8_t, PACKET_HEADER_BYTES + 6> packet{};
-  const size_t length =
-      encodePluginUpdateHelloPacket(pluginAbi, MAX_UPDATE_DATA_BYTES, outgoingSequence_, packet.data(), packet.size());
-  if (length == 0) return false;
-  return sendPacket(packet.data(), length, "plugin update hello");
-}
-
-bool BleTerminalTransport::sendPluginUpdateStatus(const uint8_t status, const uint32_t value) {
-  std::array<uint8_t, PACKET_HEADER_BYTES + 5> packet{};
-  const size_t length = encodePluginUpdateStatusPacket(status, value, outgoingSequence_, packet.data(), packet.size());
-  if (length == 0) return false;
-  return sendPacket(packet.data(), length, "plugin update status");
-}
-
-bool BleTerminalTransport::readyToSend() const {
+bool PluginBleTransport::readyToSend() const {
   return status() == Status::CONNECTED && connectionHandle_.load() != NO_CONNECTION && txValueHandle_ != 0 &&
          indicationsEnabled_.load() && !indicationInFlight_.load();
 }
 
-size_t BleTerminalTransport::maxCommandBytes() const {
+size_t PluginBleTransport::maxPacketBytes() const {
   const uint16_t connectionHandle = connectionHandle_.load();
   if (!readyToSend() || connectionHandle == NO_CONNECTION) return 0;
 
   const uint16_t mtu = ble_att_mtu(connectionHandle);
-  if (mtu <= PACKET_HEADER_BYTES + 3) return 0;
-  return std::min(MAX_COMMAND_BYTES, static_cast<size_t>(mtu - 3 - PACKET_HEADER_BYTES));
+  if (mtu <= 3) return 0;
+  return std::min(MAX_PACKET_BYTES, static_cast<size_t>(mtu - 3));
 }
 
-bool BleTerminalTransport::requestConnectionParameters(const uint16_t connectionHandle, const bool active) {
+bool PluginBleTransport::requestConnectionParameters(const uint16_t connectionHandle, const bool active) {
   const ble_gap_upd_params parameters{
       active ? ACTIVE_CONNECTION_INTERVAL_MIN : IDLE_CONNECTION_INTERVAL_MIN,
       active ? ACTIVE_CONNECTION_INTERVAL_MAX : IDLE_CONNECTION_INTERVAL_MAX,
@@ -323,19 +263,19 @@ bool BleTerminalTransport::requestConnectionParameters(const uint16_t connection
   };
   const int result = ble_gap_update_params(connectionHandle, &parameters);
   if (result != 0) {
-    LOG_DBG("BLE_TERM", "%s connection parameter request failed (%d)", active ? "Active" : "Idle", result);
+    LOG_DBG("PLUGIN_BLE", "%s connection parameter request failed (%d)", active ? "Active" : "Idle", result);
     return false;
   }
   return true;
 }
 
-void BleTerminalTransport::setTransferActive(const bool active) {
+void PluginBleTransport::setTransferActive(const bool active) {
   const uint16_t connectionHandle = connectionHandle_.load();
   if (connectionHandle == NO_CONNECTION || transferActive_.exchange(active) == active) return;
   requestConnectionParameters(connectionHandle, active);
 }
 
-bool BleTerminalTransport::sendPacket(const uint8_t* packet, const size_t length, const char* description) {
+bool PluginBleTransport::send(const uint8_t* packet, const size_t length) {
   const uint16_t connectionHandle = connectionHandle_.load();
   const uint16_t mtu = connectionHandle == NO_CONNECTION ? 0 : ble_att_mtu(connectionHandle);
   if (!packet || length == 0 || !readyToSend() || !isConnectionSecure(connectionHandle) || mtu <= 3 ||
@@ -354,51 +294,50 @@ bool BleTerminalTransport::sendPacket(const uint8_t* packet, const size_t length
   const int result = ble_gatts_indicate_custom(connectionHandle, txValueHandle_, value);
   if (result != 0) {
     indicationInFlight_ = false;
-    LOG_ERR("BLE_TERM", "Unable to send %s (%d)", description, result);
+    LOG_ERR("PLUGIN_BLE", "Unable to send packet (%d)", result);
     return false;
   }
-  outgoingSequence_++;
   return true;
 }
 
-bool BleTerminalTransport::isConnectionSecure(const uint16_t connectionHandle) {
+bool PluginBleTransport::isConnectionSecure(const uint16_t connectionHandle) {
   ble_gap_conn_desc descriptor{};
   const int result = ble_gap_conn_find(connectionHandle, &descriptor);
   return result == 0 && descriptor.sec_state.encrypted && descriptor.sec_state.authenticated;
 }
 
-void BleTerminalTransport::hostTask(void*) {
+void PluginBleTransport::hostTask(void*) {
   nimble_port_run();
   nimble_port_freertos_deinit();
 }
 
-void BleTerminalTransport::onReset(const int reason) {
-  LOG_ERR("BLE_TERM", "NimBLE reset (%d)", reason);
-  BleTerminalTransport* instance = active_.load();
+void PluginBleTransport::onReset(const int reason) {
+  LOG_ERR("PLUGIN_BLE", "NimBLE reset (%d)", reason);
+  PluginBleTransport* instance = active_.load();
   if (instance && !instance->stopping_.load()) instance->setStatus(Status::STARTING);
 }
 
-void BleTerminalTransport::onSync() {
-  BleTerminalTransport* instance = active_.load();
+void PluginBleTransport::onSync() {
+  PluginBleTransport* instance = active_.load();
   if (!instance || instance->stopping_.load()) return;
 
   const int addressResult = ble_hs_id_infer_auto(0, &instance->ownAddressType_);
   if (addressResult != 0) {
-    LOG_ERR("BLE_TERM", "Unable to select BLE address (%d)", addressResult);
+    LOG_ERR("PLUGIN_BLE", "Unable to select BLE address (%d)", addressResult);
     instance->setStatus(Status::ERROR);
     return;
   }
 
   const int advertisingResult = instance->startAdvertising();
   if (advertisingResult != 0) {
-    LOG_ERR("BLE_TERM", "Unable to start advertising (%d)", advertisingResult);
+    LOG_ERR("PLUGIN_BLE", "Unable to start advertising (%d)", advertisingResult);
     instance->setStatus(Status::ERROR);
   }
 }
 
-int BleTerminalTransport::startAdvertising() {
+int PluginBleTransport::startAdvertising() {
   // A legacy advertising packet is limited to 31 bytes. Flags, the complete
-  // 128-bit service UUID, and "X4 Terminal" need 34 bytes together, so keep
+  // 128-bit service UUID, and the device name do not fit together, so keep
   // the discoverable service UUID in the primary packet and put the name in
   // the scan response.
   ble_hs_adv_fields advertisingFields{};
@@ -423,15 +362,15 @@ int BleTerminalTransport::startAdvertising() {
   parameters.disc_mode = BLE_GAP_DISC_MODE_GEN;
   parameters.itvl_min = ADVERTISING_INTERVAL_MIN;
   parameters.itvl_max = ADVERTISING_INTERVAL_MAX;
-  result = ble_gap_adv_start(ownAddressType_, nullptr, BLE_HS_FOREVER, &parameters, &BleTerminalTransport::gapEvent,
-                             nullptr);
+  result =
+      ble_gap_adv_start(ownAddressType_, nullptr, BLE_HS_FOREVER, &parameters, &PluginBleTransport::gapEvent, nullptr);
   if (result != 0) return result;
   setStatus(Status::ADVERTISING);
   return 0;
 }
 
-int BleTerminalTransport::gapEvent(ble_gap_event* event, void*) {
-  BleTerminalTransport* instance = active_.load();
+int PluginBleTransport::gapEvent(ble_gap_event* event, void*) {
+  PluginBleTransport* instance = active_.load();
   if (!instance || !event) return 0;
 
   switch (event->type) {
@@ -453,7 +392,7 @@ int BleTerminalTransport::gapEvent(ble_gap_event* event, void*) {
       } else if (!instance->stopping_.load()) {
         const int result = instance->startAdvertising();
         if (result != 0) {
-          LOG_ERR("BLE_TERM", "Unable to restart advertising after connection failure (%d)", result);
+          LOG_ERR("PLUGIN_BLE", "Unable to restart advertising after connection failure (%d)", result);
           instance->setStatus(Status::ERROR);
         }
       }
@@ -467,7 +406,7 @@ int BleTerminalTransport::gapEvent(ble_gap_event* event, void*) {
       if (!instance->stopping_.load()) {
         const int result = instance->startAdvertising();
         if (result != 0) {
-          LOG_ERR("BLE_TERM", "Unable to restart advertising after disconnect (%d)", result);
+          LOG_ERR("PLUGIN_BLE", "Unable to restart advertising after disconnect (%d)", result);
           instance->setStatus(Status::ERROR);
         }
       }
@@ -477,7 +416,7 @@ int BleTerminalTransport::gapEvent(ble_gap_event* event, void*) {
         const bool enabled = event->subscribe.cur_indicate != 0;
         if (instance->indicationsEnabled_.exchange(enabled) != enabled) instance->statusRevision_++;
         if (!enabled) instance->indicationInFlight_ = false;
-        LOG_INF("BLE_TERM", "Reader input indications %s",
+        LOG_INF("PLUGIN_BLE", "Reader input indications %s",
                 instance->indicationsEnabled_.load() ? "enabled" : "disabled");
       }
       break;
@@ -492,18 +431,18 @@ int BleTerminalTransport::gapEvent(ble_gap_event* event, void*) {
       break;
     case BLE_GAP_EVENT_ENC_CHANGE:
       if (event->enc_change.status == 0 && instance->isConnectionSecure(event->enc_change.conn_handle)) {
-        LOG_INF("BLE_TERM", "Connection is encrypted and authenticated");
+        LOG_INF("PLUGIN_BLE", "Connection is encrypted and authenticated");
         instance->setPairingPasskey(0);
         instance->setStatus(Status::CONNECTED);
       } else {
-        LOG_ERR("BLE_TERM", "Authenticated encryption failed (%d)", event->enc_change.status);
+        LOG_ERR("PLUGIN_BLE", "Authenticated encryption failed (%d)", event->enc_change.status);
         instance->setPairingPasskey(0);
         ble_gap_terminate(event->enc_change.conn_handle, BLE_ERR_REM_USER_CONN_TERM);
       }
       break;
     case BLE_GAP_EVENT_PASSKEY_ACTION:
       if (event->passkey.params.action != BLE_SM_IOACT_DISP) {
-        LOG_ERR("BLE_TERM", "Unexpected pairing action (%u)", event->passkey.params.action);
+        LOG_ERR("PLUGIN_BLE", "Unexpected pairing action (%u)", event->passkey.params.action);
         return BLE_HS_ENOTSUP;
       } else {
         ble_sm_io pairingIo{};
@@ -511,24 +450,24 @@ int BleTerminalTransport::gapEvent(ble_gap_event* event, void*) {
         pairingIo.passkey = 100000U + esp_random() % 900000U;
         const int result = ble_sm_inject_io(event->passkey.conn_handle, &pairingIo);
         if (result != 0) {
-          LOG_ERR("BLE_TERM", "Unable to supply pairing passkey (%d)", result);
+          LOG_ERR("PLUGIN_BLE", "Unable to supply pairing passkey (%d)", result);
           return result;
         }
         instance->setPairingPasskey(pairingIo.passkey);
         instance->setStatus(Status::PAIRING);
-        LOG_INF("BLE_TERM", "Pairing passkey displayed on reader");
+        LOG_INF("PLUGIN_BLE", "Pairing passkey displayed on reader");
       }
       break;
     case BLE_GAP_EVENT_REPEAT_PAIRING: {
       ble_gap_conn_desc descriptor{};
       const int findResult = ble_gap_conn_find(event->repeat_pairing.conn_handle, &descriptor);
       if (findResult != 0) {
-        LOG_ERR("BLE_TERM", "Unable to find peer for repeat pairing (%d)", findResult);
+        LOG_ERR("PLUGIN_BLE", "Unable to find peer for repeat pairing (%d)", findResult);
         return BLE_GAP_REPEAT_PAIRING_IGNORE;
       }
       const int deleteResult = ble_store_util_delete_peer(&descriptor.peer_id_addr);
       if (deleteResult != 0) {
-        LOG_ERR("BLE_TERM", "Unable to remove stale BLE bond (%d)", deleteResult);
+        LOG_ERR("PLUGIN_BLE", "Unable to remove stale BLE bond (%d)", deleteResult);
         return BLE_GAP_REPEAT_PAIRING_IGNORE;
       }
       instance->setPairingPasskey(0);
@@ -537,7 +476,7 @@ int BleTerminalTransport::gapEvent(ble_gap_event* event, void*) {
     }
     case BLE_GAP_EVENT_PARING_COMPLETE:
       if (event->pairing_complete.status != 0) {
-        LOG_ERR("BLE_TERM", "Pairing failed (%d)", event->pairing_complete.status);
+        LOG_ERR("PLUGIN_BLE", "Pairing failed (%d)", event->pairing_complete.status);
         instance->setPairingPasskey(0);
         ble_gap_terminate(event->pairing_complete.conn_handle, BLE_ERR_REM_USER_CONN_TERM);
       }
@@ -546,7 +485,7 @@ int BleTerminalTransport::gapEvent(ble_gap_event* event, void*) {
       if (!instance->stopping_.load() && instance->status() != Status::CONNECTED) {
         const int result = instance->startAdvertising();
         if (result != 0) {
-          LOG_ERR("BLE_TERM", "Unable to restart advertising after completion (%d)", result);
+          LOG_ERR("PLUGIN_BLE", "Unable to restart advertising after completion (%d)", result);
           instance->setStatus(Status::ERROR);
         }
       }
@@ -557,9 +496,9 @@ int BleTerminalTransport::gapEvent(ble_gap_event* event, void*) {
   return 0;
 }
 
-int BleTerminalTransport::gattAccess(const uint16_t connectionHandle, const uint16_t, ble_gatt_access_ctxt* context,
-                                     void*) {
-  BleTerminalTransport* instance = active_.load();
+int PluginBleTransport::gattAccess(const uint16_t connectionHandle, const uint16_t, ble_gatt_access_ctxt* context,
+                                   void*) {
+  PluginBleTransport* instance = active_.load();
   if (!instance || !context || context->op != BLE_GATT_ACCESS_OP_WRITE_CHR) return BLE_ATT_ERR_WRITE_NOT_PERMITTED;
   if (!isConnectionSecure(connectionHandle)) return BLE_ATT_ERR_INSUFFICIENT_AUTHEN;
 
@@ -579,6 +518,6 @@ int BleTerminalTransport::gattAccess(const uint16_t connectionHandle, const uint
   return 0;
 }
 
-}  // namespace ble_terminal
+}  // namespace plugin_ble
 
 #endif

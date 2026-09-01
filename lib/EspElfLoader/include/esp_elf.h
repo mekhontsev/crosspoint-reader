@@ -6,19 +6,19 @@
 
 #pragma once
 
-#include <stdint.h>
 #include <stddef.h>
+#include <stdint.h>
 
-#include "private/elf_types.h"
 #include "private/elf_symbol.h"
+#include "private/elf_types.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 typedef struct elf_file {
-    uint8_t *payload;
-    size_t size;
+  uint8_t* payload;
+  size_t size;
 } elf_file_t;
 
 /**
@@ -43,7 +43,7 @@ typedef const struct esp_elfsym esp_elf_symbol_table_t;
  * @note The actual file path will be constructed as "FS_PATH/name"
  * @note Allocates memory for file content using esp_elf_malloc()
  */
-int esp_elf_open(elf_file_t *file, const char *name);
+int esp_elf_open(elf_file_t* file, const char* name);
 
 /**
  * @brief Close ELF file and release associated resources.
@@ -54,7 +54,7 @@ int esp_elf_open(elf_file_t *file, const char *name);
  * @note Should be called paired with esp_elf_open() to prevent memory leaks
  * @note If file is NULL, this function does nothing (null-safe)
  */
-void esp_elf_close(elf_file_t *file);
+void esp_elf_close(elf_file_t* file);
 
 /**
  * @brief Map symbol's address of ELF to physic space.
@@ -64,7 +64,7 @@ void esp_elf_close(elf_file_t *file);
  *
  * @return Mapped physic address.
  */
-uintptr_t esp_elf_map_sym(esp_elf_t *elf, uintptr_t sym);
+uintptr_t esp_elf_map_sym(esp_elf_t* elf, uintptr_t sym);
 
 /**
  * @brief Initialize ELF object.
@@ -73,7 +73,7 @@ uintptr_t esp_elf_map_sym(esp_elf_t *elf, uintptr_t sym);
  *
  * @return ESP_OK if success or other if failed.
  */
-int esp_elf_init(esp_elf_t *elf);
+int esp_elf_init(esp_elf_t* elf);
 
 /**
  * @brief Decode and relocate ELF data.
@@ -83,7 +83,7 @@ int esp_elf_init(esp_elf_t *elf);
  *
  * @return ESP_OK if success or other if failed.
  */
-int esp_elf_relocate(esp_elf_t *elf, const uint8_t *pbuf);
+int esp_elf_relocate(esp_elf_t* elf, const uint8_t* pbuf);
 
 /**
  * @brief Request running relocated ELF function.
@@ -95,7 +95,7 @@ int esp_elf_relocate(esp_elf_t *elf, const uint8_t *pbuf);
  *
  * @return ESP_OK if success or other if failed.
  */
-int esp_elf_request(esp_elf_t *elf, int opt, int argc, char *argv[]);
+int esp_elf_request(esp_elf_t* elf, int opt, int argc, char* argv[]);
 
 /**
  * @brief Deinitialize ELF object.
@@ -104,7 +104,7 @@ int esp_elf_request(esp_elf_t *elf, int opt, int argc, char *argv[]);
  *
  * @return None
  */
-void esp_elf_deinit(esp_elf_t *elf);
+void esp_elf_deinit(esp_elf_t* elf);
 
 /**
  * @brief Print header description information of ELF.
@@ -113,7 +113,7 @@ void esp_elf_deinit(esp_elf_t *elf);
  *
  * @return None
  */
-void esp_elf_print_ehdr(const uint8_t *pbuf);
+void esp_elf_print_ehdr(const uint8_t* pbuf);
 
 /**
  * @brief Print program header description information of ELF.
@@ -122,7 +122,7 @@ void esp_elf_print_ehdr(const uint8_t *pbuf);
  *
  * @return None
  */
-void esp_elf_print_phdr(const uint8_t *pbuf);
+void esp_elf_print_phdr(const uint8_t* pbuf);
 
 /**
  * @brief Print section header description information of ELF.
@@ -131,7 +131,7 @@ void esp_elf_print_phdr(const uint8_t *pbuf);
  *
  * @return None
  */
-void esp_elf_print_shdr(const uint8_t *pbuf);
+void esp_elf_print_shdr(const uint8_t* pbuf);
 
 /**
  * @brief Print section information of ELF.
@@ -140,7 +140,7 @@ void esp_elf_print_shdr(const uint8_t *pbuf);
  *
  * @return None
  */
-void esp_elf_print_sec(esp_elf_t *elf);
+void esp_elf_print_sec(esp_elf_t* elf);
 
 /**
  * @brief Register symbol table to global symbol tables array.
@@ -152,7 +152,7 @@ void esp_elf_print_sec(esp_elf_t *elf);
  * @note This function is not thread-safe. External synchronization must be used if calling
  *       this function concurrently from multiple threads.
  */
-int esp_elf_register_symbol(esp_elf_symbol_table_t *symbol_table);
+int esp_elf_register_symbol(esp_elf_symbol_table_t* symbol_table);
 
 /**
  * @brief Unregister symbol table from global symbol tables array.
@@ -164,7 +164,7 @@ int esp_elf_register_symbol(esp_elf_symbol_table_t *symbol_table);
  * @note This function is not thread-safe. External synchronization must be used if calling
  *       this function concurrently from multiple threads.
  */
-int esp_elf_unregister_symbol(esp_elf_symbol_table_t *symbol_table);
+int esp_elf_unregister_symbol(esp_elf_symbol_table_t* symbol_table);
 
 /**
  * @brief Find symbol address by symbol name in registered tables.
@@ -174,7 +174,7 @@ int esp_elf_unregister_symbol(esp_elf_symbol_table_t *symbol_table);
  * @return Symbol address if found, 0 if not found.
  * @note Search order is reverse registration order (latest registered first).
  */
-uintptr_t esp_elf_find_symbol(const char *sym_name);
+uintptr_t esp_elf_find_symbol(const char* sym_name);
 
 #ifdef __cplusplus
 }

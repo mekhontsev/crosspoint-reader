@@ -242,10 +242,8 @@ PluginKeyboardResult pluginKeyboardResult;
 class PluginTextKeyboardActivity final : public KeyboardEntryActivity {
  public:
   PluginTextKeyboardActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const char* title,
-                             const size_t maxLength, const bool showHeaderKeyboardToggle,
-                             const bool enableSystemLanguageSwitch)
-      : KeyboardEntryActivity(renderer, mappedInput, title, "", maxLength, InputType::Text, showHeaderKeyboardToggle,
-                              enableSystemLanguageSwitch) {}
+                             const size_t maxLength, const bool showHeaderKeyboardToggle)
+      : KeyboardEntryActivity(renderer, mappedInput, title, "", maxLength, InputType::Text, showHeaderKeyboardToggle) {}
 
   void onExit() override {
     if (pluginKeyboardResult.state == PluginKeyboardResultState::OPEN) {
@@ -481,8 +479,7 @@ extern "C" uint8_t crosspoint_plugin_open_text_keyboard_v2(const char* title, co
   pluginKeyboardResult.text.clear();
   pluginKeyboardResult.state = PluginKeyboardResultState::OPEN;
   auto keyboard = makeUniqueNoThrow<PluginTextKeyboardActivity>(
-      *renderer, *mappedInput, title, maxLength, (flags & crosspoint_plugin::KEYBOARD_FLAG_HEADER_TOGGLE) != 0,
-      (flags & crosspoint_plugin::KEYBOARD_FLAG_SYSTEM_LANGUAGE) != 0);
+      *renderer, *mappedInput, title, maxLength, (flags & crosspoint_plugin::KEYBOARD_FLAG_HEADER_TOGGLE) != 0);
   if (!keyboard) {
     pluginKeyboardResult.state = PluginKeyboardResultState::NONE;
     return false;

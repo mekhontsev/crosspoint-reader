@@ -82,14 +82,14 @@ ruby -rdigest -e 'puts [
 
 echo "#define UI_10_FONT_ID ($(
 ruby -rdigest -e 'puts [
-  "./ubuntu_10_medium.h",
+  "./ubuntu_10_regular.h",
   "./ubuntu_10_bold.h",
 ].map{|f| Digest::SHA256.hexdigest(File.read(f)).to_i(16) }.sum % (2 ** 32) - (2 ** 31)'
 ))"
 
 echo "#define UI_12_FONT_ID ($(
 ruby -rdigest -e 'puts [
-  "./ubuntu_12_medium.h",
+  "./ubuntu_12_regular.h",
   "./ubuntu_12_bold.h",
 ].map{|f| Digest::SHA256.hexdigest(File.read(f)).to_i(16) }.sum % (2 ** 32) - (2 ** 31)'
 ))"
@@ -100,19 +100,23 @@ ruby -rdigest -e 'puts [
 ].map{|f| Digest::SHA256.hexdigest(File.read(f)).to_i(16) }.sum % (2 ** 32) - (2 ** 31)'
 ))"
 
+FONT_ID_NAMES=(
+  NOTOSERIF_12_FONT_ID
+  NOTOSERIF_14_FONT_ID
+  NOTOSERIF_16_FONT_ID
+  NOTOSERIF_18_FONT_ID
+  NOTOSANS_12_FONT_ID
+  NOTOSANS_14_FONT_ID
+  NOTOSANS_16_FONT_ID
+  NOTOSANS_18_FONT_ID
+  UI_10_FONT_ID
+  UI_12_FONT_ID
+  SMALL_FONT_ID
+)
+
 echo ""
-cat <<'EOF'
-// Font ID 0 is reserved as the "not found" sentinel.
-// Guard against any hash accidentally producing 0.
-static_assert(NOTOSERIF_12_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(NOTOSERIF_14_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(NOTOSERIF_16_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(NOTOSERIF_18_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(NOTOSANS_12_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(NOTOSANS_14_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(NOTOSANS_16_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(NOTOSANS_18_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(UI_10_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(UI_12_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(SMALL_FONT_ID != 0, "Font ID collision with sentinel");
-EOF
+echo "// Font ID 0 is reserved as the \"not found\" sentinel."
+echo "// Guard against any hash accidentally producing 0."
+for name in "${FONT_ID_NAMES[@]}"; do
+  echo "static_assert(${name} != 0, \"Font ID collision with sentinel\");"
+done

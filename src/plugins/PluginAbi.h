@@ -45,7 +45,6 @@ enum class PluginBleStatusV4 : uint8_t { STOPPED, STARTING, ADVERTISING, PAIRING
 constexpr size_t PLUGIN_BLE_MAX_PACKET_BYTES = 244;
 
 constexpr uint32_t KEYBOARD_FLAG_HEADER_TOGGLE = 1U << 0U;
-constexpr uint32_t KEYBOARD_FLAG_SYSTEM_LANGUAGE = 1U << 1U;
 
 }  // namespace crosspoint_plugin
 

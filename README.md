@@ -45,6 +45,9 @@ authors can use BLE and the remaining services for their own protocols. See the
 [Plugin Development guide](https://github.com/mekhontsev/crosspoint-plugins/blob/main/PLUGIN_DEVELOPMENT.md)
 and [plugin architecture](https://github.com/mekhontsev/crosspoint-plugins/blob/main/ARCHITECTURE.md).
 
+See [Terminal running on X4 Pro](https://github.com/mekhontsev/crosspoint-plugins/blob/main/README.md#terminal-on-x4-pro)
+for a photo of an independently loaded plugin using this host.
+
 ABI compatibility is separate from the upstream firmware version, bundle version,
 and PageWire wire version. There is no firmware build-ID match requirement.
 A declared ABI mismatch is rejected before module execution.

@@ -9,7 +9,7 @@ class MappedInputManager;
 
 namespace crosspoint_plugin {
 
-constexpr uint32_t ABI_VERSION = 4;
+constexpr uint32_t ABI_VERSION = 5;
 constexpr char ROOT_PATH[] = "/plugins";
 constexpr char MANAGER_PATH[] = "/plugins/manager.so";
 constexpr char CREATE_SYMBOL[] = "crosspoint_plugin_create";
@@ -45,6 +45,9 @@ enum class PluginBleStatusV4 : uint8_t { STOPPED, STARTING, ADVERTISING, PAIRING
 constexpr size_t PLUGIN_BLE_MAX_PACKET_BYTES = 244;
 
 constexpr uint32_t KEYBOARD_FLAG_HEADER_TOGGLE = 1U << 0U;
+
+constexpr size_t SETTINGS_MAX_BYTES = 128;
+constexpr size_t SETTINGS_ID_MAX_BYTES = 15;
 
 }  // namespace crosspoint_plugin
 
@@ -83,3 +86,29 @@ extern "C" crosspoint_plugin::PluginBleStatusV4 crosspoint_plugin_ble_status_v4(
 extern "C" uint32_t crosspoint_plugin_ble_status_revision_v4();
 extern "C" uint32_t crosspoint_plugin_ble_dropped_packets_v4();
 extern "C" uint32_t crosspoint_plugin_ble_pairing_passkey_v4();
+
+// Plugin-owned opaque settings in the existing internal NVS partition, not SD.
+// IDs: 1-15 lowercase ASCII letters, digits, '_' or '-'. One blob per ID.
+// Main activity task only. Read/write return 1 on success; failed reads set length to 0.
+extern "C" uint8_t crosspoint_plugin_settings_read_v5(const char* id, uint8_t* data, size_t capacity, size_t* length);
+extern "C" uint8_t crosspoint_plugin_settings_write_v5(const char* id, const uint8_t* data, size_t length);
+// Existing firmware log ring, consistent snapshot into a caller-owned 4096-byte buffer.
+extern "C" size_t crosspoint_plugin_logs_copy_v5(uint8_t* output, size_t capacity);
+
+// ABI 5 background services: synchronous, bounded request handlers on the main
+// activity task. No renderer access, blocking loops, threads or retained host callbacks.
+// Generic service channel uses the foreground plugin's BLE lifetime (no extra radio).
+namespace crosspoint_plugin {
+constexpr uint16_t PLUGIN_FLAG_SERVICE = 1;
+using ServiceRequest = size_t (*)(const uint8_t*, size_t, uint8_t*, size_t);
+using StateProvider = size_t (*)(void*, const uint8_t*, size_t, uint8_t*, size_t);
+}  // namespace crosspoint_plugin
+// Providers are removed before the owning activity/module is destroyed.
+extern "C" uint8_t crosspoint_plugin_state_register_v5(const char* id, crosspoint_plugin::StateProvider callback,
+                                                       void* context);
+extern "C" void crosspoint_plugin_state_unregister_v5(const char* id, void* context);
+extern "C" size_t crosspoint_plugin_state_call_v5(const char* id, const uint8_t* request, size_t length,
+                                                  uint8_t* response, size_t capacity);
+// Bounded read-only SD access: absolute path, no dot segments. Returns 1 even at EOF.
+extern "C" uint8_t crosspoint_plugin_file_read_v5(const char* path, uint32_t offset, uint8_t* data, size_t capacity,
+                                                  size_t* length, uint32_t* total);

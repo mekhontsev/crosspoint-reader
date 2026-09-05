@@ -18,8 +18,10 @@ RTC_NOINIT_ATTR size_t logHead = 0;
 // never properly initialized.
 RTC_NOINIT_ATTR uint32_t rtcLogMagic;
 static constexpr uint32_t LOG_RTC_MAGIC = 0xDEADBEEF;
+static portMUX_TYPE logRingLock = portMUX_INITIALIZER_UNLOCKED;
 
 void addToLogRingBuffer(const char* message) {
+  portENTER_CRITICAL(&logRingLock);
   // Add the message to the ring buffer, overwriting old messages if necessary.
   // If the magic is wrong or logHead is out of range (RTC_NOINIT_ATTR garbage
   // on cold boot), clear the entire buffer so subsequent reads are safe.
@@ -31,6 +33,23 @@ void addToLogRingBuffer(const char* message) {
   strncpy(logMessages[logHead], message, MAX_ENTRY_LEN - 1);
   logMessages[logHead][MAX_ENTRY_LEN - 1] = '\0';
   logHead = (logHead + 1) % MAX_LOG_LINES;
+  portEXIT_CRITICAL(&logRingLock);
+}
+
+size_t copyLastLogs(uint8_t* output, const size_t capacity) {
+  if (!output || capacity < MAX_ENTRY_LEN * MAX_LOG_LINES) return 0;
+  size_t bytes = 0;
+  portENTER_CRITICAL(&logRingLock);
+  if (rtcLogMagic == LOG_RTC_MAGIC && logHead < MAX_LOG_LINES) {
+    for (size_t i = 0; i < MAX_LOG_LINES; ++i) {
+      const size_t index = (logHead + i) % MAX_LOG_LINES;
+      const size_t length = strnlen(logMessages[index], MAX_ENTRY_LEN);
+      memcpy(output + bytes, logMessages[index], length);
+      bytes += length;
+    }
+  }
+  portEXIT_CRITICAL(&logRingLock);
+  return bytes;
 }
 
 // Since logging can take a large amount of flash, we want to make the format string as short as possible.
@@ -97,17 +116,22 @@ std::string getLastLogs() {
 // panic-reboot path) must call clearLastLogs() after a true result to fully
 // reinitialize the ring buffer and stamp the magic before getLastLogs() is used.
 bool sanitizeLogHead() {
+  portENTER_CRITICAL(&logRingLock);
   if (rtcLogMagic != LOG_RTC_MAGIC || logHead >= MAX_LOG_LINES) {
     logHead = 0;
+    portEXIT_CRITICAL(&logRingLock);
     return true;
   }
+  portEXIT_CRITICAL(&logRingLock);
   return false;
 }
 
 void clearLastLogs() {
+  portENTER_CRITICAL(&logRingLock);
   for (size_t i = 0; i < MAX_LOG_LINES; i++) {
     logMessages[i][0] = '\0';
   }
   logHead = 0;
   rtcLogMagic = LOG_RTC_MAGIC;
+  portEXIT_CRITICAL(&logRingLock);
 }

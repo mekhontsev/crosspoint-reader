@@ -2,6 +2,7 @@
 
 #include <esp_elf.h>
 
+#include <array>
 #include <cstdint>
 #include <memory>
 
@@ -29,6 +30,7 @@ class PluginLoader final {
 
   void unloadManager();
   void unloadChild();
+  void serviceBackground();
 
   static PluginLoader& getInstance();
 
@@ -43,6 +45,14 @@ class PluginLoader final {
 
   Module manager_;
   Module child_;
+  Module service_;
+  std::array<char, crosspoint_plugin::MODULE_NAME_BYTES> serviceName_{};
+  std::array<uint8_t, crosspoint_plugin::PLUGIN_BLE_MAX_PACKET_BYTES> serviceResponse_{};
+  size_t serviceResponseBytes_ = 0;
+  uint32_t serviceResponseAt_ = 0;
+  uint32_t serviceConnectionRevision_ = 0;
+  crosspoint_plugin::ServiceRequest serviceRequest_ = nullptr;
+  void unloadService();
 
   bool load(Module& module, const char* path);
   bool describeChild(const char* moduleName, crosspoint_plugin::PluginInfoV3* info);

@@ -215,7 +215,10 @@ void ActivityManager::loop() {
                        [target](const auto& activity) { return activity.get() == target; });
   };
   if (!activityAlive(PLUGIN_LOADER.childRoot())) PLUGIN_LOADER.unloadChild();
-  if (!activityAlive(PLUGIN_LOADER.managerRoot())) PLUGIN_LOADER.unloadManager();
+  if (!activityAlive(PLUGIN_LOADER.managerRoot()))
+    PLUGIN_LOADER.unloadManager();
+  else
+    PLUGIN_LOADER.serviceBackground();
 #endif
 }
 

@@ -325,7 +325,13 @@ std::unique_ptr<Activity> PluginLoader::create(Module& module, const char* path,
     unload(module);
     return nullptr;
   }
-  Activity* activity = create(&renderer, &mappedInput);
+  Activity* activity = nullptr;
+  {
+    // Factories may register renderer resources. Do not race the menu's render
+    // task; SD reading and ELF relocation above do not hold this lock.
+    RenderLock lock;
+    activity = create(&renderer, &mappedInput);
+  }
   if (!activity) {
     LOG_ERR("PLUGIN", "Module could not allocate its root activity: %s", path);
     module.lastError = Error::OUT_OF_MEMORY;
@@ -350,7 +356,7 @@ Activity* PluginLoader::createChild(const char* moduleName, GfxRenderer& rendere
 }
 
 bool PluginLoader::describeChild(const char* moduleName, crosspoint_plugin::PluginInfoV3* info) {
-  if (!info || !validModuleName(moduleName) || child_.rootActivity || child_.loaded) return false;
+  if (!info || !validModuleName(moduleName)) return false;
   std::array<char, 128> path{};
   const int pathLength = std::snprintf(path.data(), path.size(), "%s/%s.so", crosspoint_plugin::ROOT_PATH, moduleName);
   if (pathLength <= 0 || static_cast<size_t>(pathLength) >= path.size()) return false;
@@ -398,6 +404,7 @@ bool PluginLoader::beginInstall(const char* moduleName, const uint32_t bytes,
     return false;
   }
   if (!Storage.ensureDirectoryExists(crosspoint_plugin::ROOT_PATH)) return false;
+  if (std::strcmp(moduleName, serviceName_.data()) == 0) unloadService();
 
   const int pathLength = std::snprintf(pluginInstall.path.data(), pluginInstall.path.size(), "%s/%s.so",
                                        crosspoint_plugin::ROOT_PATH, moduleName);
@@ -459,7 +466,75 @@ void PluginLoader::unload(Module& module) {
   elf_reset_symbol_resolver();
 }
 
-void PluginLoader::unloadManager() { unload(manager_); }
+void PluginLoader::unloadService() {
+  unload(service_);
+  serviceName_[0] = '\0';
+  serviceRequest_ = nullptr;
+  serviceResponseBytes_ = 0;
+}
+
+void PluginLoader::unloadManager() {
+  unloadService();
+  unload(manager_);
+}
+
+void PluginLoader::serviceBackground() {
+  auto& ble = plugin_ble::sharedPluginBleTransport();
+  const uint32_t connectionRevision = ble.statusRevision();
+  if (connectionRevision != serviceConnectionRevision_) {
+    serviceConnectionRevision_ = connectionRevision;
+    serviceResponseBytes_ = 0;
+  }
+  if (ble.status() != plugin_ble::PluginBleTransport::Status::CONNECTED) {
+    serviceResponseBytes_ = 0;
+    return;
+  }
+  if (serviceResponseBytes_ != 0) {
+    if (millis() - serviceResponseAt_ >= 10000 ||
+        (ble.serviceReady() && ble.sendService(serviceResponse_.data(), serviceResponseBytes_))) {
+      serviceResponseBytes_ = 0;
+    }
+    return;
+  }
+  plugin_ble::PluginBleTransport::IncomingPacket packet{};
+  if (!ble.pollService(packet) || packet.length < 6) return;
+  // Routing only: request ID (4 LE bytes), module-name length, module name,
+  // opaque payload. Reply echoes ID, transport status, opaque response.
+  const size_t nameBytes = packet.bytes[4];
+  std::memcpy(serviceResponse_.data(), packet.bytes.data(), 4);
+  serviceResponse_[4] = 1;  // Invalid request.
+  serviceResponseBytes_ = 5;
+  serviceResponseAt_ = millis();
+  if (!nameBytes || nameBytes >= serviceName_.size() || 5 + nameBytes >= packet.length) return;
+  std::array<char, crosspoint_plugin::MODULE_NAME_BYTES> name{};
+  std::memcpy(name.data(), packet.bytes.data() + 5, nameBytes);
+  if (std::strlen(name.data()) != nameBytes || !validModuleName(name.data())) return;
+  serviceResponse_[4] = 2;  // Module missing, corrupt, incompatible or not a service.
+  if (!serviceRequest_ || std::strcmp(name.data(), serviceName_.data()) != 0) {
+    // Do not read a file while the foreground installer is replacing it.
+    if (pluginInstall.active) return;
+    unloadService();
+    serviceResponseBytes_ = 5;
+    crosspoint_plugin::PluginInfoV3 info{};
+    if (!describeChild(name.data(), &info) || !(info.descriptor.flags & crosspoint_plugin::PLUGIN_FLAG_SERVICE)) return;
+    std::array<char, 128> path{};
+    std::snprintf(path.data(), path.size(), "%s/%s.so", crosspoint_plugin::ROOT_PATH, name.data());
+    if (!load(service_, path.data())) return;
+    const auto abi = reinterpret_cast<crosspoint_plugin::ReadAbi>(findSymbol(service_, crosspoint_plugin::ABI_SYMBOL));
+    serviceRequest_ =
+        reinterpret_cast<crosspoint_plugin::ServiceRequest>(findSymbol(service_, "crosspoint_plugin_request_v5"));
+    if (!abi || abi() != crosspoint_plugin::ABI_VERSION || !serviceRequest_) {
+      unloadService();
+      serviceResponseBytes_ = 5;
+      return;
+    }
+    std::strcpy(serviceName_.data(), name.data());
+  }
+  const size_t bytes = serviceRequest_(packet.bytes.data() + 5 + nameBytes, packet.length - 5 - nameBytes,
+                                       serviceResponse_.data() + 5, serviceResponse_.size() - 5);
+  serviceResponse_[4] = (bytes && bytes <= serviceResponse_.size() - 5) ? 0 : 3;
+  if (!serviceResponse_[4]) serviceResponseBytes_ += bytes;
+}
 
 void PluginLoader::unloadChild() { unload(child_); }
 

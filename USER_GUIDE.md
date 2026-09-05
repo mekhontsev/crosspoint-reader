@@ -1,5 +1,10 @@
 # CrossPoint User Guide
 
+> For this fork's X4 Pro plugin setup, use the single
+> [PageWire installation and user guide](https://github.com/mekhontsev/pagewire/blob/main/docs/user-guide.md).
+> This document describes upstream reading features and controls, not how to
+> install the plugin-host firmware.
+
 Welcome to the **CrossPoint** firmware. This guide outlines the hardware controls, navigation, and reading features of the device.
 
 - [CrossPoint User Guide](#crosspoint-user-guide)

@@ -1,0 +1,5 @@
+add_executable(PluginServicesTest PluginServicesTest.cpp ${REPO_ROOT}/src/plugins/PluginServices.cpp)
+target_include_directories(PluginServicesTest PRIVATE stubs)
+target_compile_definitions(PluginServicesTest PRIVATE ENABLE_PLUGINS=1)
+target_link_libraries(PluginServicesTest PRIVATE crosspoint_test_common GTest::gtest_main)
+gtest_discover_tests(PluginServicesTest)

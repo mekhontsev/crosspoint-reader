@@ -4,6 +4,7 @@
 
 #include <Arduino.h>
 #include <Logging.h>
+#include <esp_bt.h>
 #include <esp_err.h>
 #include <esp_random.h>
 #include <host/ble_att.h>
@@ -57,8 +58,41 @@ const ble_uuid128_t RX_UUID =
 const ble_uuid128_t TX_UUID =
     BLE_UUID128_INIT(0x13, 0x6d, 0x3f, 0x7b, 0x8b, 0x8e, 0xa6, 0xa2, 0x1e, 0x4f, 0x7a, 0x7f, 0x10, 0x8f, 0x2c, 0x6f);
 
-ble_gatt_chr_def characteristics[3]{};
+const ble_uuid128_t SERVICE_RX_UUID =
+    BLE_UUID128_INIT(0x14, 0x6d, 0x3f, 0x7b, 0x8b, 0x8e, 0xa6, 0xa2, 0x1e, 0x4f, 0x7a, 0x7f, 0x10, 0x8f, 0x2c, 0x6f);
+const ble_uuid128_t SERVICE_TX_UUID =
+    BLE_UUID128_INIT(0x15, 0x6d, 0x3f, 0x7b, 0x8b, 0x8e, 0xa6, 0xa2, 0x1e, 0x4f, 0x7a, 0x7f, 0x10, 0x8f, 0x2c, 0x6f);
+
+ble_gatt_chr_def characteristics[5]{};
 ble_gatt_svc_def services[2]{};
+
+esp_err_t initializeNimble() {
+#if CONFIG_IDF_TARGET_ESP32S3
+  // The prebuilt SDK defaults to a continuously awake controller. Configure
+  // only this BLE instance; keep the board's CPU/sleep policy unchanged.
+  esp_bt_controller_config_t config = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
+  config.sleep_mode = ESP_BT_SLEEP_MODE_1;
+  config.sleep_clock = ESP_BT_SLEEP_CLOCK_MAIN_XTAL;
+  esp_err_t result = esp_bt_controller_init(&config);
+  if (result != ESP_OK) return result;
+  result = esp_bt_controller_enable(ESP_BT_MODE_BLE);
+  if (result == ESP_OK) result = esp_bt_sleep_enable();
+  if (result == ESP_OK) result = esp_nimble_init();
+  if (result != ESP_OK) {
+    if (esp_bt_controller_get_status() == ESP_BT_CONTROLLER_STATUS_ENABLED) {
+      const esp_err_t disabled = esp_bt_controller_disable();
+      if (disabled != ESP_OK) LOG_ERR("PLUGIN_BLE", "Controller cleanup disable failed (%d)", disabled);
+    }
+    const esp_err_t deinitialized = esp_bt_controller_deinit();
+    if (deinitialized != ESP_OK) LOG_ERR("PLUGIN_BLE", "Controller cleanup deinit failed (%d)", deinitialized);
+    return result;
+  }
+  LOG_INF("PLUGIN_BLE", "BLE modem sleep enabled (main crystal)");
+  return ESP_OK;
+#else
+  return nimble_port_init();
+#endif
+}
 
 }  // namespace
 
@@ -68,6 +102,7 @@ std::atomic<PluginBleTransport*> PluginBleTransport::active_{nullptr};
 
 PluginBleTransport::PluginBleTransport() {
   queue_ = xQueueCreateStatic(QUEUE_DEPTH, sizeof(IncomingPacket), queueStorage_.data(), &queueControl_);
+  serviceQueue_ = xQueueCreateStatic(2, sizeof(IncomingPacket), serviceQueueStorage_.data(), &serviceQueueControl_);
 }
 
 PluginBleTransport::~PluginBleTransport() { stop(); }
@@ -105,6 +140,13 @@ bool PluginBleTransport::configureGatt() {
   characteristics[1].flags = BLE_GATT_CHR_F_INDICATE;
   characteristics[1].val_handle = &txValueHandle_;
 
+  characteristics[2] = characteristics[0];
+  characteristics[2].uuid = &SERVICE_RX_UUID.u;
+  characteristics[2].arg = reinterpret_cast<void*>(1);
+  characteristics[3] = characteristics[1];
+  characteristics[3].uuid = &SERVICE_TX_UUID.u;
+  characteristics[3].val_handle = &serviceTxValueHandle_;
+
   services[0].type = BLE_GATT_SVC_TYPE_PRIMARY;
   services[0].uuid = &SERVICE_UUID.u;
   services[0].characteristics = characteristics;
@@ -124,9 +166,11 @@ bool PluginBleTransport::configureGatt() {
 
 bool PluginBleTransport::start() {
   if (status() != Status::STOPPED && status() != Status::ERROR) return true;
-  if (!queue_) return failStart("Packet queue is unavailable", ESP_ERR_NO_MEM);
+  if (!queue_ || !serviceQueue_) return failStart("Packet queue is unavailable", ESP_ERR_NO_MEM);
 
   xQueueReset(queue_);
+  xQueueReset(serviceQueue_);
+  serviceIndicationsEnabled_ = false;
   droppedPackets_ = 0;
   pairingPasskey_ = 0;
   connectionHandle_ = NO_CONNECTION;
@@ -135,11 +179,13 @@ bool PluginBleTransport::start() {
   txValueHandle_ = 0;
   stopping_.store(false);
   transferActive_.store(false);
+  parameterConnectionHandle_ = NO_CONNECTION;
+  parameterRetry_.finish();
   active_.store(this);
   setStatus(Status::STARTING);
 
   LOG_INF("PLUGIN_BLE", "Initializing NimBLE port");
-  const esp_err_t initResult = nimble_port_init();
+  const esp_err_t initResult = initializeNimble();
   if (initResult != ESP_OK) return failStart("NimBLE initialization failed", initResult);
   stackInitialized_ = true;
   LOG_INF("PLUGIN_BLE", "NimBLE port initialized");
@@ -230,13 +276,30 @@ void PluginBleTransport::stop() {
   indicationsEnabled_ = false;
   indicationInFlight_ = false;
   setPairingPasskey(0);
+  serviceIndicationsEnabled_ = false;
+  if (serviceQueue_) xQueueReset(serviceQueue_);
   stopping_.store(false);
   transferActive_.store(false);
   if (queue_) xQueueReset(queue_);
   setStatus(Status::STOPPED);
 }
 
-bool PluginBleTransport::poll(IncomingPacket& packet) { return queue_ && xQueueReceive(queue_, &packet, 0) == pdPASS; }
+bool PluginBleTransport::poll(IncomingPacket& packet) {
+  serviceConnectionParameters();
+  return queue_ && xQueueReceive(queue_, &packet, 0) == pdPASS;
+}
+
+bool PluginBleTransport::pollService(IncomingPacket& packet) {
+  return serviceQueue_ && xQueueReceive(serviceQueue_, &packet, 0) == pdPASS;
+}
+
+bool PluginBleTransport::serviceReady() const {
+  return status() == Status::CONNECTED && serviceIndicationsEnabled_.load() && !indicationInFlight_.load();
+}
+
+bool PluginBleTransport::sendService(const uint8_t* packet, const size_t length) {
+  return sendOn(serviceTxValueHandle_, serviceIndicationsEnabled_.load(), packet, length);
+}
 
 bool PluginBleTransport::readyToSend() const {
   return status() == Status::CONNECTED && connectionHandle_.load() != NO_CONNECTION && txValueHandle_ != 0 &&
@@ -269,17 +332,54 @@ bool PluginBleTransport::requestConnectionParameters(const uint16_t connectionHa
   return true;
 }
 
-void PluginBleTransport::setTransferActive(const bool active) {
+void PluginBleTransport::setTransferActive(const bool active) { transferActive_.store(active); }
+
+void PluginBleTransport::serviceConnectionParameters() {
   const uint16_t connectionHandle = connectionHandle_.load();
-  if (connectionHandle == NO_CONNECTION || transferActive_.exchange(active) == active) return;
+  if (connectionHandle == NO_CONNECTION || status_.load() != Status::CONNECTED) {
+    parameterConnectionHandle_ = NO_CONNECTION;
+    parameterRetry_.finish();
+    return;
+  }
+  const bool active = transferActive_.load();
+  const uint32_t now = millis();
+  if (parameterConnectionHandle_ != connectionHandle || parameterModeActive_ != active) {
+    parameterConnectionHandle_ = connectionHandle;
+    parameterModeActive_ = active;
+    parameterRetry_.reset(now);
+  }
+  if (!parameterRetry_.due(now)) return;
+
+  ble_gap_conn_desc descriptor{};
+  if (ble_gap_conn_find(connectionHandle, &descriptor) == 0) {
+    const uint16_t minimum = active ? ACTIVE_CONNECTION_INTERVAL_MIN : IDLE_CONNECTION_INTERVAL_MIN;
+    const uint16_t maximum = active ? ACTIVE_CONNECTION_INTERVAL_MAX : IDLE_CONNECTION_INTERVAL_MAX;
+    const uint16_t latency = active ? ACTIVE_CONNECTION_LATENCY : IDLE_CONNECTION_LATENCY;
+    if (descriptor.conn_itvl >= minimum && descriptor.conn_itvl <= maximum && descriptor.conn_latency == latency) {
+      parameterRetry_.finish();
+      LOG_DBG("PLUGIN_BLE", "%s mode confirmed: interval=%u, latency=%u", active ? "Active" : "Idle",
+              descriptor.conn_itvl, descriptor.conn_latency);
+      return;
+    }
+  }
+  if (parameterRetry_.exhausted()) {
+    parameterRetry_.finish();
+    LOG_INF("PLUGIN_BLE", "%s mode not confirmed; keeping peer parameters", active ? "Active" : "Idle");
+    return;
+  }
   requestConnectionParameters(connectionHandle, active);
+  parameterRetry_.attempted(now);
 }
 
 bool PluginBleTransport::send(const uint8_t* packet, const size_t length) {
+  return sendOn(txValueHandle_, indicationsEnabled_.load(), packet, length);
+}
+
+bool PluginBleTransport::sendOn(const uint16_t handle, const bool enabled, const uint8_t* packet, const size_t length) {
   const uint16_t connectionHandle = connectionHandle_.load();
   const uint16_t mtu = connectionHandle == NO_CONNECTION ? 0 : ble_att_mtu(connectionHandle);
-  if (!packet || length == 0 || !readyToSend() || !isConnectionSecure(connectionHandle) || mtu <= 3 ||
-      length > static_cast<size_t>(mtu - 3)) {
+  if (!packet || length == 0 || length > MAX_PACKET_BYTES || !enabled || handle == 0 || status() != Status::CONNECTED ||
+      !isConnectionSecure(connectionHandle) || mtu <= 3 || length > static_cast<size_t>(mtu - 3)) {
     return false;
   }
 
@@ -291,7 +391,7 @@ bool PluginBleTransport::send(const uint8_t* packet, const size_t length) {
     indicationInFlight_ = false;
     return false;
   }
-  const int result = ble_gatts_indicate_custom(connectionHandle, txValueHandle_, value);
+  const int result = ble_gatts_indicate_custom(connectionHandle, handle, value);
   if (result != 0) {
     indicationInFlight_ = false;
     LOG_ERR("PLUGIN_BLE", "Unable to send packet (%d)", result);
@@ -377,18 +477,18 @@ int PluginBleTransport::gapEvent(ble_gap_event* event, void*) {
     case BLE_GAP_EVENT_CONNECT:
       if (event->connect.status == 0) {
         instance->connectionHandle_ = event->connect.conn_handle;
+        instance->serviceIndicationsEnabled_ = false;
+        xQueueReset(instance->serviceQueue_);
         instance->indicationsEnabled_ = false;
         instance->indicationInFlight_ = false;
         instance->transferActive_ = true;
         instance->setPairingPasskey(0);
         instance->setStatus(Status::PAIRING);
 
-        instance->requestConnectionParameters(event->connect.conn_handle, true);
-
         // The central initiates pairing explicitly. This lets clients register
         // the correct passkey-entry handler before the Security Manager asks
         // the reader to display a code. GATT permissions still reject every
-        // terminal write until authenticated encryption is established.
+        // plugin write until authenticated encryption is established.
       } else if (!instance->stopping_.load()) {
         const int result = instance->startAdvertising();
         if (result != 0) {
@@ -398,6 +498,8 @@ int PluginBleTransport::gapEvent(ble_gap_event* event, void*) {
       }
       break;
     case BLE_GAP_EVENT_DISCONNECT:
+      instance->serviceIndicationsEnabled_ = false;
+      xQueueReset(instance->serviceQueue_);
       instance->connectionHandle_ = NO_CONNECTION;
       instance->indicationsEnabled_ = false;
       instance->indicationInFlight_ = false;
@@ -412,6 +514,9 @@ int PluginBleTransport::gapEvent(ble_gap_event* event, void*) {
       }
       break;
     case BLE_GAP_EVENT_SUBSCRIBE:
+      if (event->subscribe.attr_handle == instance->serviceTxValueHandle_) {
+        instance->serviceIndicationsEnabled_ = event->subscribe.cur_indicate != 0;
+      }
       if (event->subscribe.attr_handle == instance->txValueHandle_) {
         const bool enabled = event->subscribe.cur_indicate != 0;
         if (instance->indicationsEnabled_.exchange(enabled) != enabled) instance->statusRevision_++;
@@ -421,7 +526,9 @@ int PluginBleTransport::gapEvent(ble_gap_event* event, void*) {
       }
       break;
     case BLE_GAP_EVENT_NOTIFY_TX:
-      if (event->notify_tx.indication && event->notify_tx.attr_handle == instance->txValueHandle_ &&
+      if (event->notify_tx.indication &&
+          (event->notify_tx.attr_handle == instance->txValueHandle_ ||
+           event->notify_tx.attr_handle == instance->serviceTxValueHandle_) &&
           event->notify_tx.status != 0) {
         // An indication first reports "sent" (status 0), then a terminal
         // confirmation or error. Keep one control packet in flight until that
@@ -497,7 +604,7 @@ int PluginBleTransport::gapEvent(ble_gap_event* event, void*) {
 }
 
 int PluginBleTransport::gattAccess(const uint16_t connectionHandle, const uint16_t, ble_gatt_access_ctxt* context,
-                                   void*) {
+                                   void* argument) {
   PluginBleTransport* instance = active_.load();
   if (!instance || !context || context->op != BLE_GATT_ACCESS_OP_WRITE_CHR) return BLE_ATT_ERR_WRITE_NOT_PERMITTED;
   if (!isConnectionSecure(connectionHandle)) return BLE_ATT_ERR_INSUFFICIENT_AUTHEN;
@@ -511,7 +618,8 @@ int PluginBleTransport::gattAccess(const uint16_t connectionHandle, const uint16
   const int copyResult = ble_hs_mbuf_to_flat(context->om, packet.bytes.data(), packet.bytes.size(), &copied);
   if (copyResult != 0 || copied != length) return BLE_ATT_ERR_UNLIKELY;
 
-  if (!instance->queue_ || xQueueSend(instance->queue_, &packet, 0) != pdPASS) {
+  QueueHandle_t queue = argument ? instance->serviceQueue_ : instance->queue_;
+  if (!queue || xQueueSend(queue, &packet, 0) != pdPASS) {
     instance->droppedPackets_++;
     return BLE_ATT_ERR_INSUFFICIENT_RES;
   }

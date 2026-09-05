@@ -9,6 +9,8 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+
+#include "ConnectionModeRetry.h"
 struct ble_gap_event;
 struct ble_gatt_access_ctxt;
 
@@ -35,6 +37,9 @@ class PluginBleTransport final {
   bool poll(IncomingPacket& packet);
   bool send(const uint8_t* packet, size_t length);
   bool readyToSend() const;
+  bool pollService(IncomingPacket& packet);
+  bool sendService(const uint8_t* packet, size_t length);
+  bool serviceReady() const;
   size_t maxPacketBytes() const;
   void setTransferActive(bool active);
 
@@ -50,6 +55,9 @@ class PluginBleTransport final {
   StaticQueue_t queueControl_{};
   std::array<uint8_t, QUEUE_DEPTH * sizeof(IncomingPacket)> queueStorage_{};
   QueueHandle_t queue_ = nullptr;
+  StaticQueue_t serviceQueueControl_{};
+  std::array<uint8_t, 2 * sizeof(IncomingPacket)> serviceQueueStorage_{};
+  QueueHandle_t serviceQueue_ = nullptr;
 
   std::atomic<Status> status_{Status::STOPPED};
   std::atomic<uint32_t> statusRevision_{0};
@@ -57,19 +65,26 @@ class PluginBleTransport final {
   std::atomic<uint32_t> pairingPasskey_{0};
   std::atomic<uint16_t> connectionHandle_{NO_CONNECTION};
   std::atomic<bool> indicationsEnabled_{false};
+  std::atomic<bool> serviceIndicationsEnabled_{false};
   std::atomic<bool> indicationInFlight_{false};
   std::atomic<bool> stopping_{false};
   std::atomic<bool> transferActive_{false};
+  uint16_t parameterConnectionHandle_ = NO_CONNECTION;
+  bool parameterModeActive_ = false;
+  ConnectionModeRetry parameterRetry_;
   bool stackInitialized_ = false;
   bool hostTaskStarted_ = false;
   uint8_t ownAddressType_ = 0;
   uint16_t txValueHandle_ = 0;
+  uint16_t serviceTxValueHandle_ = 0;
   static std::atomic<PluginBleTransport*> active_;
 
   void setStatus(Status status);
   void setPairingPasskey(uint32_t passkey);
   bool configureGatt();
+  bool sendOn(uint16_t handle, bool enabled, const uint8_t* packet, size_t length);
   bool requestConnectionParameters(uint16_t connectionHandle, bool active);
+  void serviceConnectionParameters();
   static bool isConnectionSecure(uint16_t connectionHandle);
   int startAdvertising();
   bool failStart(const char* reason, int errorCode);
